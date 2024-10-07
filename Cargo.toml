@@ -1,0 +1,10 @@
+[package]
+name = "md5rs"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0.89"
+ffmpeg-sidecar = "1.1.2"
+ndarray = "0.16.1"
+ort = { version = "=2.0.0-rc.6", features = ["openvino", "load-dynamic"] }
