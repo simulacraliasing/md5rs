@@ -5,6 +5,9 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0.89"
+crossbeam = "0.8.4"
 ffmpeg-sidecar = "1.1.2"
 ndarray = "0.16.1"
 ort = { version = "=2.0.0-rc.6", features = ["openvino", "load-dynamic"] }
+rayon = "1.10.0"
+walkdir = "2.5.0"

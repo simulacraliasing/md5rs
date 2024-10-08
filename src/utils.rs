@@ -35,10 +35,7 @@ pub fn nms(
     agnostic: bool,
     topk: usize,
     iou_threshold: f32,
-    conf_threshold: f32,
 ) -> Vec<Bbox> {
-    // Filter out boxes below confidence threshold
-    boxes.retain(|b| b.score > conf_threshold);
 
     // Sort boxes by score in descending order
     boxes.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
@@ -81,4 +78,21 @@ pub fn nms(
     }
 
     result
+}
+
+pub fn sample_evenly<T: Clone>(list: &[T], sample_size: usize) -> (Vec<T>, Vec<usize>) {
+    let len = list.len();
+    if sample_size == 0 || len == 0 {
+        return (Vec::new(), Vec::new());
+    }
+
+    let step = len as f64 / sample_size as f64;
+    let mut sampled_elements = Vec::with_capacity(sample_size);
+    let mut sampled_indexes = Vec::with_capacity(sample_size);
+    for i in 0..sample_size {
+        let index = (i as f64 * step).floor() as usize;
+        sampled_elements.push(list[index].clone());
+        sampled_indexes.push(index);
+    }
+    (sampled_elements, sampled_indexes)
 }
