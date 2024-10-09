@@ -174,31 +174,34 @@ fn main() -> anyhow::Result<()> {
             let csv = export_data
                 .iter()
                 .map(|export_frame| {
-                    export_frame
-                        .bboxes
-                        .iter()
-                        .map(|bbox| {
-                            format!(
-                                "{},{},{},{},{},{},{}",
-                                export_frame.file.file_path.to_string_lossy(),
-                                export_frame.frame_index,
-                                bbox.x1,
-                                bbox.y1,
-                                bbox.x2,
-                                bbox.y2,
-                                bbox.class
-                            )
-                        })
-                        .collect::<Vec<String>>()
-                        .join("\n")
+                    format!(
+                        "{},{},{},{},{},{},{},{}",
+                        export_frame.file.folder_id,
+                        export_frame.file.file_id,
+                        export_frame.file.file_path.to_string_lossy(),
+                        export_frame.frame_index,
+                        export_frame.is_iframe,
+                        format!(
+                            "\"{}\"",
+                            serde_json::to_string(&export_frame.bboxes)
+                                .unwrap()
+                                .replace("\"", "\"\"")
+                        ),
+                        export_frame.label,
+                        export_frame.error.clone().unwrap_or("null".to_string())
+                    )
                 })
                 .collect::<Vec<String>>()
-                .join("");
+                .join("\n");
             let mut file = OpenOptions::new()
                 .write(true)
                 .create(true)
                 .open("output/output.csv")
                 .unwrap();
+            file.write_all(
+                "folder_id,file_id,file_path,frame_index,is_iframe,bboxes,label,error\n".as_bytes(),
+            )
+            .unwrap();
             file.write_all(csv.as_bytes()).unwrap();
         }
     }
