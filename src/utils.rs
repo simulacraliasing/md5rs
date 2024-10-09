@@ -1,4 +1,8 @@
-#[derive(Clone, Debug)]
+use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
+use walkdir::WalkDir;
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Bbox {
     pub x1: f32,
     pub y1: f32,
@@ -30,13 +34,7 @@ fn iou(box1: &Bbox, box2: &Bbox) -> f32 {
     }
 }
 
-pub fn nms(
-    boxes: &mut Vec<Bbox>,
-    agnostic: bool,
-    topk: usize,
-    iou_threshold: f32,
-) -> Vec<Bbox> {
-
+pub fn nms(boxes: &mut Vec<Bbox>, agnostic: bool, topk: usize, iou_threshold: f32) -> Vec<Bbox> {
     // Sort boxes by score in descending order
     boxes.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
 
@@ -95,4 +93,52 @@ pub fn sample_evenly<T: Clone>(list: &[T], sample_size: usize) -> (Vec<T>, Vec<u
         sampled_indexes.push(index);
     }
     (sampled_elements, sampled_indexes)
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileItem {
+    pub folder_id: usize,
+    pub file_id: usize,
+    pub file_path: PathBuf,
+}
+
+pub fn index_files_and_folders(folder_path: String) -> Vec<FileItem> {
+    let mut folder_id: usize = 0;
+    let mut file_id: usize = 0;
+    let mut file_paths = Vec::new();
+
+    for entry in WalkDir::new(folder_path)
+        .into_iter()
+        .filter_map(|entry| entry.ok())
+    {
+        let path = entry.path();
+
+        if entry.file_type().is_dir() {
+            folder_id += 1;
+        } else if entry.file_type().is_file() {
+            // 判断文件是否是视频或照片
+            if is_video_photo(path) {
+                file_paths.push(FileItem {
+                    folder_id,
+                    file_id,
+                    file_path: path.to_path_buf(),
+                });
+                file_id += 1;
+            }
+        }
+    }
+
+    file_paths
+}
+
+fn is_video_photo(path: &Path) -> bool {
+    if let Some(extension) = path.extension() {
+        match extension.to_str().unwrap().to_lowercase().as_str() {
+            "mp4" | "avi" | "mkv" | "mov" => true,
+            "jpg" | "jpeg" | "png" => true,
+            _ => false,
+        }
+    } else {
+        false
+    }
 }
