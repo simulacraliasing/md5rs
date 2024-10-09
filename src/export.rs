@@ -1,7 +1,5 @@
 use std::sync::{Arc, Mutex};
 
-use crate::ExportFormat;
-
 use crate::utils::{Bbox, FileItem};
 use serde::{Deserialize, Serialize};
 

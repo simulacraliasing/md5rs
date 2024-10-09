@@ -1,10 +1,9 @@
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crate::export::{self, ExportFrame};
+use crate::export::ExportFrame;
 use crate::media::Frame;
 use crate::utils::{self, Bbox};
-use std::sync::{Arc, Mutex};
 use crossbeam_channel::{Receiver, RecvTimeoutError, Sender};
 use ndarray::{s, Array4, Axis};
 use ort::{inputs, OpenVINOExecutionProvider, Session, SessionOutputs};
@@ -24,7 +23,6 @@ pub fn detect_worker(
     config: DetectConfig,
     array_q_recv: Receiver<Frame>,
     export_q_s: Sender<ExportFrame>,
-    export_data: Arc<Mutex<Vec<ExportFrame>>>,
 ) -> thread::JoinHandle<()> {
     let config = config.clone();
     thread::spawn(move || {

@@ -124,11 +124,10 @@ fn main() -> anyhow::Result<()> {
     //thread 1.4 2.1 2.8
     init_ort_runtime().expect("Failed to initialize onnxruntime");
     for _ in 0..args.workers {
-        let export_data = Arc::clone(&export_data);
         let detect_config = detect_config.clone();
         let array_q_r = array_q_r.clone();
         let export_q_s = export_q_s.clone();
-        let detect_handle = detect_worker(detect_config, array_q_r, export_q_s, export_data);
+        let detect_handle = detect_worker(detect_config, array_q_r, export_q_s);
         detect_handles.push(detect_handle);
     }
 
