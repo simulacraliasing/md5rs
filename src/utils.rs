@@ -102,7 +102,7 @@ pub struct FileItem {
     pub file_path: PathBuf,
 }
 
-pub fn index_files_and_folders(folder_path: String) -> Vec<FileItem> {
+pub fn index_files_and_folders(folder_path: &str) -> Vec<FileItem> {
     let mut folder_id: usize = 0;
     let mut file_id: usize = 0;
     let mut file_paths = Vec::new();
