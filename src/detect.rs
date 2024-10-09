@@ -2,8 +2,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::utils;
-use crate::video::Frame;
-use crossbeam::channel::{Receiver, RecvTimeoutError};
+use crate::media::Frame;
+use crossbeam_channel::{Receiver, RecvTimeoutError};
 use ndarray::{s, Array4, Axis};
 use ort::{inputs, OpenVINOExecutionProvider, Session, SessionOutputs};
 
@@ -134,7 +134,7 @@ pub fn process_batch(frames: &[Frame], model: &Session, config: &DetectConfig) {
             boxes.push(bbox);
         }
         let nms_boxes = utils::nms(&mut boxes, true, 100, config.iou_thres);
-        let video_path = frames[i].video_path.clone();
+        let video_path = frames[i].file_path.clone();
         let iframe_index = frames[i].iframe_index;
         for b in nms_boxes {
             println!(

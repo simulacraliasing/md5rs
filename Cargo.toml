@@ -5,9 +5,15 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0.89"
-crossbeam = "0.8.4"
+clap = { version = "4.5.20", features = ["derive"] }
+crossbeam-channel = "0.5.13"
+fast_image_resize = { version = "5.0.0", features = ["image"] }
 ffmpeg-sidecar = "1.1.2"
+image = "0.25.2"
+jpeg-decoder = "0.3.1"
 ndarray = "0.16.1"
+nshare = "0.10.0"
 ort = { version = "=2.0.0-rc.6", features = ["openvino", "load-dynamic"] }
 rayon = "1.10.0"
 walkdir = "2.5.0"
+zune-jpeg = "0.4.13"
