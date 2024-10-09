@@ -1,5 +1,4 @@
-use crate::utils::sample_evenly;
-// use anyhow::Ok;
+use crate::utils::{sample_evenly, FileItem};
 use crossbeam_channel::Sender;
 use ffmpeg_sidecar::child::FfmpegChild;
 use ffmpeg_sidecar::command::FfmpegCommand;
@@ -9,11 +8,10 @@ use jpeg_decoder::Decoder;
 use ndarray::Array3;
 use std::fs::File;
 use std::io::BufReader;
-use std::path::PathBuf;
 
 pub struct Frame {
+    pub file: FileItem,
     pub data: Array3<f32>,
-    pub file_path: String,
     pub width: usize,
     pub height: usize,
     pub padding: (usize, usize),
@@ -22,35 +20,32 @@ pub struct Frame {
 }
 
 pub fn media_worker(
-    file_path: PathBuf,
+    file: FileItem,
     imgsz: usize,
+    iframe: bool,
     max_frames: Option<usize>,
     array_q_s: Sender<Frame>,
 ) {
-    if let Some(extension) = file_path.extension() {
+    if let Some(extension) = file.file_path.extension() {
         let array_q_s = array_q_s.clone();
         match extension.to_str().unwrap().to_lowercase().as_str() {
-            "jpg" | "jpeg" | "png" => process_image(&file_path, imgsz, array_q_s).unwrap(),
+            "jpg" | "jpeg" | "png" => process_image(file, imgsz, array_q_s).unwrap(),
             "mp4" | "avi" | "mkv" | "mov" => {
-                process_video(&file_path, imgsz, max_frames, array_q_s).unwrap();
+                process_video(file, imgsz, iframe, max_frames, array_q_s).unwrap();
             }
             _ => (),
         }
     }
 }
 
-pub fn process_image(
-    file_path: &PathBuf,
-    imgsz: usize,
-    array_q_s: Sender<Frame>,
-) -> anyhow::Result<()> {
+pub fn process_image(file: FileItem, imgsz: usize, array_q_s: Sender<Frame>) -> anyhow::Result<()> {
     // Placeholder for image processing logic
 
-    let img = match ImageReader::open(file_path.clone()) {
+    let img = match ImageReader::open(file.file_path.clone()) {
         Ok(reader) => match reader.decode() {
             Ok(img) => img,
             Err(_e) => {
-                let data = File::open(file_path).unwrap();
+                let data = File::open(file.file_path.clone()).unwrap();
                 let mut decoder = Decoder::new(BufReader::new(data));
                 let pixels = decoder.decode().unwrap();
                 let img = DynamicImage::ImageRgb8(
@@ -74,7 +69,7 @@ pub fn process_image(
 
     let frame_data = Frame {
         data: img_array,
-        file_path: file_path.to_string_lossy().to_string(),
+        file: file,
         width: img.width() as usize,
         height: img.height() as usize,
         padding: (pad_w, pad_h),
@@ -140,22 +135,30 @@ fn resize_with_pad(
 }
 
 pub fn process_video(
-    video_path: &PathBuf,
+    file: FileItem,
     imgsz: usize,
+    iframe: bool,
     max_frames: Option<usize>,
     array_q_s: Sender<Frame>,
 ) -> anyhow::Result<()> {
-    let video_path = video_path.to_string_lossy();
-    let input = create_ffmpeg_command(&video_path, imgsz)?;
+    let video_path = file.file_path.to_string_lossy();
+    let input = create_ffmpeg_command(&video_path, imgsz, iframe)?;
 
-    handle_ffmpeg_output(input, array_q_s, imgsz, &video_path, max_frames)?;
+    handle_ffmpeg_output(input, array_q_s, imgsz, file, max_frames)?;
 
     Ok(())
 }
 
-fn create_ffmpeg_command(video_path: &str, imgsz: usize) -> anyhow::Result<FfmpegChild> {
-    let command = FfmpegCommand::new()
-        .args(["-skip_frame", "nokey"])
+fn create_ffmpeg_command(
+    video_path: &str,
+    imgsz: usize,
+    iframe: bool,
+) -> anyhow::Result<FfmpegChild> {
+    let mut ffmpeg_command = FfmpegCommand::new();
+    if iframe {
+        ffmpeg_command.args(["-skip_frame", "nokey"]);
+    }
+    let command = ffmpeg_command
         .input(video_path)
         .args(&[
             "-an",
@@ -180,7 +183,7 @@ fn handle_ffmpeg_output(
     mut input: FfmpegChild,
     s: Sender<Frame>,
     imgsz: usize,
-    video_path: &str,
+    file: FileItem,
     max_frames: Option<usize>,
 ) -> anyhow::Result<()> {
     let mut width = None;
@@ -220,7 +223,7 @@ fn handle_ffmpeg_output(
         // let ndarray_frame = ndarray_frame.insert_axis(Axis(0));
         let frame_data = Frame {
             data: ndarray_frame,
-            file_path: video_path.to_string(),
+            file: file.clone(),
             width,
             height,
             padding,
