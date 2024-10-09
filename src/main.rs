@@ -1,28 +1,71 @@
 mod detect;
 mod utils;
-mod video;
+mod media;
 
 use crate::detect::{detect_worker, init_ort_runtime, DetectConfig};
-use crate::video::media_worker;
-use crossbeam::channel::bounded;
+use crate::media::media_worker;
+use clap::Parser;
+use crossbeam_channel::bounded;
+use rayon::prelude::*;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use walkdir::WalkDir;
 
+#[derive(Parser, Debug)]
+#[command(version, about, long_about = None)]
+struct Args {
+    /// folder to process
+    #[arg(short, long)]
+    folder: String,
+
+    /// path to the model
+    #[arg(short, long, default_value_t = String::from("models/md_v5a_d_pp_fp16.onnx"))]
+    model: String,
+
+    /// device to run the model
+    #[arg(short, long, default_value_t = String::from("CPU"))]
+    device: String,
+
+    /// max frames to process per video
+    #[arg(long)]
+    max_frames: Option<usize>,
+
+    /// image size of model input
+    #[arg(long, default_value_t = 1280)]
+    imgsz: usize,
+
+    /// batch size
+    #[arg(short, long, default_value_t = 2)]
+    batch: usize,
+
+    /// number of detection worker threads
+    #[arg(long, default_value_t = 2)]
+    workers: usize,
+
+    
+    /// NMS IoU threshold
+    #[arg(long, default_value_t = 0.45)]
+    iou: f32,
+
+    /// NMS confidence threshold
+    #[arg(long, default_value_t = 0.2)]
+    conf: f32,
+}
+
 fn main() -> anyhow::Result<()> {
-    let folder_path = "C:/Users/Zhengyi/git/Megatool/mock/测试";
+    let args: Args = Args::parse();
+    let folder_path = args.folder;
     let detect_config = DetectConfig {
-        device: String::from("GPU"),
-        model_path: String::from("models/md_v5a_d_pp_fp16.onnx"),
-        target_size: 1280,
-        iou_thres: 0.45,
-        conf_thres: 0.2,
-        batch_size: 5,
+        device: args.device,
+        model_path: args.model,
+        target_size: args.imgsz,
+        iou_thres: args.iou,
+        conf_thres: args.conf,
+        batch_size: args.batch,
         timeout: 10,
     };
-    let imgsz = detect_config.target_size;
-    let max_frames = Some(3);
+    let imgsz = args.imgsz;
+    let max_frames = args.max_frames;
     let start = Instant::now();
 
     let file_paths: Vec<PathBuf> = WalkDir::new(folder_path)
@@ -32,16 +75,13 @@ fn main() -> anyhow::Result<()> {
         .map(|entry| entry.path().to_path_buf())
         .collect();
 
-    let file_paths = Arc::new(Mutex::new(file_paths));
-    let mut media_handles = vec![];
     let mut detect_handles = vec![];
 
-    let media_worker_threads = 12;
+    let detect_worker_threads = args.workers;
 
-    let detect_worker_threads = 2;
-
-    let (array_q_s, array_q_r) = bounded(6);
-
+    let (array_q_s, array_q_r) = bounded(args.batch * args.workers * 1);
+    //batch  0.6 2.2 3.2 7.4
+    //thread 1.4 2.1 2.8
     init_ort_runtime().expect("Failed to initialize onnxruntime");
     for _ in 0..detect_worker_threads {
         let detect_config = detect_config.clone();
@@ -50,16 +90,11 @@ fn main() -> anyhow::Result<()> {
         detect_handles.push(detect_handle);
     }
 
-    for _ in 0..media_worker_threads {
-        let file_paths = Arc::clone(&file_paths);
+    file_paths.par_iter().for_each(|file_path| {
         let array_q_s = array_q_s.clone();
-        let media_handle = media_worker(file_paths, imgsz, max_frames, array_q_s);
-        media_handles.push(media_handle);
-    }
 
-    for m_handle in media_handles {
-        m_handle.join().unwrap();
-    }
+        media_worker(file_path.clone(), imgsz, max_frames, array_q_s);
+    });
 
     drop(array_q_s);
 
