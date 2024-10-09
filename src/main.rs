@@ -11,6 +11,7 @@ use crossbeam_channel::{bounded, unbounded};
 use rayon::prelude::*;
 use std::fs::OpenOptions;
 use std::io::Write;
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -108,7 +109,7 @@ fn main() -> anyhow::Result<()> {
     let max_frames = args.max_frames;
     let start = Instant::now();
 
-    let file_paths = index_files_and_folders(folder_path);
+    let file_paths = index_files_and_folders(&folder_path);
 
     let mut detect_handles = vec![];
 
@@ -192,10 +193,11 @@ fn main() -> anyhow::Result<()> {
                 })
                 .collect::<Vec<String>>()
                 .join("\n");
+            let csv_path = Path::new(&folder_path).join("result.csv");
             let mut file = OpenOptions::new()
                 .write(true)
                 .create(true)
-                .open("output/output.csv")
+                .open(csv_path)
                 .unwrap();
             file.write_all(
                 "folder_id,file_id,file_path,frame_index,is_iframe,bboxes,label,error\n".as_bytes(),
