@@ -9,8 +9,8 @@ use crate::utils::{nms, Bbox};
 use anyhow::Result;
 use crossbeam_channel::{Receiver, RecvTimeoutError, Sender};
 use ndarray::{s, Array4, Axis};
-use ort::{inputs, OpenVINOExecutionProvider, Session, SessionOutputs};
-use tracing::{debug, instrument};
+use ort::{inputs, ExecutionProvider, Session, SessionOutputs};
+use tracing::{debug, instrument, info, warn};
 
 #[derive(Clone, Debug)]
 pub struct DetectConfig {
@@ -35,18 +35,61 @@ pub fn detect_worker(
     })
 }
 
-pub fn init_ort_runtime() -> Result<()> {
-    ort::init_from("lib/onnxruntime.dll").commit()?;
-    Ok(())
-}
-
 pub fn load_model(model_path: &str, device: &str) -> Result<Session> {
-    let model = Session::builder()?
-        .with_execution_providers([OpenVINOExecutionProvider::default()
-            .with_device_type(device)
-            .build()
-            .error_on_failure()])?
-        .commit_from_file(model_path)?;
+
+    let coreml = ort::CoreMLExecutionProvider::default()
+            .with_ane_only()
+            .with_subgraphs();
+    info!("ONNX Runtime built with CoreML available: {:?}", coreml.is_available().unwrap());
+
+    let tensor_rt = ort::TensorRTExecutionProvider::default()
+        .with_engine_cache(true)
+        .with_engine_cache_path("./models")
+        .with_timing_cache(true)
+        .with_fp16(true)
+        .with_profile_min_shapes("images:1x3x1280x1280")
+        .with_profile_opt_shapes("images:2x3x1280x1280")
+        .with_profile_max_shapes("images:5x3x1280x1280")
+        .with_device_id(device.parse().unwrap_or(0));
+    info!(
+        "ONNX Runtime built with TensorRT available: {:?}",
+        tensor_rt.is_available().unwrap()
+    );
+
+    let cuda = ort::CUDAExecutionProvider::default().with_device_id(device.parse().unwrap_or(0));
+    info!("ONNX Runtime built with CUDA available: {:?}", cuda.is_available().unwrap());
+
+    let open_vino = ort::OpenVINOExecutionProvider::default().with_device_type(device.to_uppercase());
+    info!("ONNX Runtime built with OpenVINO available: {:?}", open_vino.is_available().unwrap());
+
+    let mut model = Session::builder()?;
+
+    let mut fallback = true;
+
+    for ep in vec![
+        coreml.build().error_on_failure(),
+        tensor_rt.build().error_on_failure(),
+        cuda.build().error_on_failure(),
+        open_vino.build().error_on_failure(),
+    ] {
+        match Session::builder()?.with_execution_providers(vec![ep.clone()]) {
+            Ok(m) => {
+                model = m;
+                fallback = false;
+                info!("Using execution provider: {:?}", ep);
+                break;
+            }
+            Err(e) => {
+                warn!("Execution provider {:?} is not available: {:?}", ep, e);
+            },
+        }
+    }
+
+    if fallback {
+        warn!("No execution providers registered successfully. Falling back to CPU.");
+    }
+
+    let model = model.commit_from_file(model_path)?;
     Ok(model)
 }
 
@@ -96,7 +139,10 @@ pub fn process_frames(
             Err(RecvTimeoutError::Timeout) => {
                 // Timeout occurred, process whatever frames we have
                 if !frames.is_empty() {
-                    debug!("Recieve frame timeout! Processing frame number: {}", frames.len());
+                    debug!(
+                        "Recieve frame timeout! Processing frame number: {}",
+                        frames.len()
+                    );
                     process_batch(&frames, model, config, &s)?;
                     frames.clear();
                 }
@@ -104,7 +150,10 @@ pub fn process_frames(
             }
             Err(RecvTimeoutError::Disconnected) => {
                 if !frames.is_empty() {
-                    debug!("Channel disconnected! Processing frame number: {}", frames.len());
+                    debug!(
+                        "Channel disconnected! Processing frame number: {}",
+                        frames.len()
+                    );
                     process_batch(&frames, model, config, &s)?;
                     frames.clear();
                 }
@@ -174,7 +223,7 @@ pub fn process_batch(
 
         let shoot_time = match frames[i].shoot_time {
             Some(shoot_time) => shoot_time.to_string(),
-            None => "null".to_string()
+            None => "null".to_string(),
         };
 
         let export_frame = ExportFrame {

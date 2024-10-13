@@ -1,7 +1,7 @@
 use crate::utils::{sample_evenly, FileItem};
 
 use anyhow::Result;
-use chrono::{DateTime, Local};
+use chrono::{offset, DateTime, Local, NaiveDateTime};
 use crossbeam_channel::Sender;
 use ffmpeg_sidecar::child::FfmpegChild;
 use ffmpeg_sidecar::command::FfmpegCommand;
@@ -334,10 +334,14 @@ fn get_video_date(video: &Path) -> Result<DateTime<Local>> {
 
     #[cfg(target_os = "linux")]
     {
-        let m_time: i64 = metadata.st_mtime()?;
-        let c_time: i64 = metadata.st_ctime()?;
+        use chrono::NaiveDateTime;
+        use std::os::linux::fs::MetadataExt;
+        let m_time: i64 = metadata.st_mtime();
+        let c_time: i64 = metadata.st_ctime();
         let shoot_time = m_time.min(c_time);
-        let shoot_time: DateTime<Local> = Local.timestamp(shoot_time, 0);
+        let offset = Local::now().offset().to_owned();
+        let shoot_time = NaiveDateTime::from_timestamp(shoot_time, 0);
+        let shoot_time = DateTime::<Local>::from_naive_utc_and_offset(shoot_time, offset);
 
         Ok(shoot_time)
     }
