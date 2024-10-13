@@ -6,3 +6,5 @@
 /models
 /examples
 *.txt
+*.code-workspace
+logs/

@@ -1,20 +1,28 @@
-mod detect;
-mod export;
-mod media;
-mod utils;
-
-use crate::detect::{detect_worker, init_ort_runtime, DetectConfig};
-use crate::media::media_worker;
-use crate::utils::index_files_and_folders;
-use clap::{Parser, ValueEnum};
-use crossbeam_channel::{bounded, unbounded};
-use rayon::prelude::*;
-use std::fs::OpenOptions;
-use std::io::Write;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
+use anyhow::{Ok, Result};
+use clap::{Parser, ValueEnum};
+use crossbeam_channel::{bounded, unbounded};
+use rayon::prelude::*;
+use tracing::{error, info, instrument, warn};
+
+use export::ExportFrame;
+use utils::FileItem;
+
+mod detect;
+mod export;
+mod log;
+mod media;
+mod utils;
+
+use crate::detect::{detect_worker, init_ort_runtime, DetectConfig};
+use crate::export::{export, export_worker, parse_export_csv};
+use crate::log::init_logger;
+use crate::media::media_worker;
+use crate::utils::index_files_and_folders;
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 struct Args {
@@ -47,7 +55,7 @@ struct Args {
     batch: usize,
 
     /// number of detection worker threads
-    #[arg(long, default_value_t = 2)]
+    #[arg(short, long, default_value_t = 2)]
     workers: usize,
 
     /// NMS IoU threshold
@@ -61,6 +69,22 @@ struct Args {
     /// export format
     #[arg(long, value_enum, default_value_t = ExportFormat::Json)]
     export: ExportFormat,
+
+    /// log level
+    #[arg(long, default_value_t = String::from("info"))]
+    log_level: String,
+
+    /// log file
+    #[arg(long, default_value_t = String::from("md5rs.log"))]
+    log_file: String,
+
+    /// checkpoint interval
+    #[arg(long, default_value_t = 1)]
+    checkpoint: usize,
+
+    /// resume from checkpoint
+    #[arg(long)]
+    resume_from: Option<String>,
 }
 
 /// Enum for devices
@@ -88,28 +112,50 @@ enum ExportFormat {
     Csv,
 }
 
-fn main() -> anyhow::Result<()> {
+#[instrument]
+fn main() -> Result<()> {
+
     let args: Args = Args::parse();
+
+    let guard = init_logger(args.log_level, args.log_file).expect("Failed to initialize logger");
+
+    if args.checkpoint == 0 {
+        error!("Checkpoint should be greater than 0");
+        return Ok(());
+    }
+
     let folder_path = args.folder;
     let device = match args.device {
         Device::Cpu => "CPU",
         Device::Gpu => "GPU",
         Device::Npu => "NPU",
     };
-    let detect_config = DetectConfig {
+    let detect_config = Arc::new(DetectConfig {
         device: device.to_string(),
         model_path: args.model,
         target_size: args.imgsz,
         iou_thres: args.iou,
         conf_thres: args.conf,
         batch_size: args.batch,
-        timeout: 10,
-    };
+        timeout: 50,
+        iframe: args.iframe_only,
+    });
     let imgsz = args.imgsz;
     let max_frames = args.max_frames;
     let start = Instant::now();
 
-    let file_paths = index_files_and_folders(&folder_path);
+    let mut file_paths = index_files_and_folders(&folder_path);
+
+    let export_data = Arc::new(Mutex::new(Vec::new()));
+
+    let file_paths = match args.resume_from {
+        Some(checkpoint_path) => {
+            let all_files =
+                resume_from_checkpoint(&checkpoint_path, &mut file_paths, &export_data)?;
+            all_files.to_owned()
+        }
+        None => file_paths,
+    };
 
     let mut detect_handles = vec![];
 
@@ -119,13 +165,13 @@ fn main() -> anyhow::Result<()> {
 
     let (export_q_s, export_q_r) = unbounded();
 
-    let export_data = Arc::new(Mutex::new(Vec::new()));
+    let checkpoint_counter = Arc::new(Mutex::new(0 as usize));
 
     //batch  0.6 2.2 3.2 7.4
     //thread 1.4 2.1 2.8
     init_ort_runtime().expect("Failed to initialize onnxruntime");
     for _ in 0..args.workers {
-        let detect_config = detect_config.clone();
+        let detect_config = Arc::clone(&detect_config);
         let array_q_r = array_q_r.clone();
         let export_q_s = export_q_s.clone();
         let detect_handle = detect_worker(detect_config, array_q_r, export_q_s);
@@ -135,8 +181,17 @@ fn main() -> anyhow::Result<()> {
     for _ in 0..4 {
         let export_q_r = export_q_r.clone();
         let export_data = Arc::clone(&export_data);
+        let folder_path = folder_path.clone();
+        let checkpoint_counter = Arc::clone(&checkpoint_counter);
         let export_handle = std::thread::spawn(move || {
-            export::export_worker(export_q_r, &export_data);
+            export_worker(
+                args.checkpoint,
+                &checkpoint_counter,
+                &args.export,
+                &folder_path,
+                export_q_r,
+                &export_data,
+            );
         });
         export_handles.push(export_handle);
     }
@@ -158,56 +213,71 @@ fn main() -> anyhow::Result<()> {
         e_handle.join().unwrap();
     }
 
-    match args.export {
-        ExportFormat::Json => {
-            let export_data = Arc::try_unwrap(export_data).unwrap().into_inner().unwrap();
-            let json = serde_json::to_string_pretty(&export_data).unwrap();
-            let mut file = OpenOptions::new()
-                .write(true)
-                .create(true)
-                .open("output/output.json")
-                .unwrap();
-            file.write_all(json.as_bytes()).unwrap();
-        }
-        ExportFormat::Csv => {
-            let export_data = Arc::try_unwrap(export_data).unwrap().into_inner().unwrap();
-            let csv = export_data
-                .iter()
-                .map(|export_frame| {
-                    format!(
-                        "{},{},{},{},{},{},{},{}",
-                        export_frame.file.folder_id,
-                        export_frame.file.file_id,
-                        export_frame.file.file_path.to_string_lossy(),
-                        export_frame.frame_index,
-                        export_frame.is_iframe,
-                        format!(
-                            "\"{}\"",
-                            serde_json::to_string(&export_frame.bboxes)
-                                .unwrap()
-                                .replace("\"", "\"\"")
-                        ),
-                        export_frame.label,
-                        export_frame.error.clone().unwrap_or("null".to_string())
-                    )
-                })
-                .collect::<Vec<String>>()
-                .join("\n");
-            let csv_path = Path::new(&folder_path).join("result.csv");
-            let mut file = OpenOptions::new()
-                .write(true)
-                .create(true)
-                .open(csv_path)
-                .unwrap();
-            file.write_all(
-                "folder_id,file_id,file_path,frame_index,is_iframe,bboxes,label,error\n".as_bytes(),
-            )
-            .unwrap();
-            file.write_all(csv.as_bytes()).unwrap();
-        }
-    }
+    export(&folder_path, export_data, &args.export)?;
 
     let duration = start.elapsed();
-    println!("Time elapsed: {:?}", duration);
+    info!("Time elapsed: {:?}", duration);
+
+    drop(guard);
     Ok(())
+}
+
+fn resume_from_checkpoint<'a>(
+    checkpoint_path: &str,
+    all_files: &'a mut HashSet<FileItem>,
+    export_data: &Arc<Mutex<Vec<ExportFrame>>>,
+) -> Result<&'a mut HashSet<FileItem>> {
+    let checkpoint = Path::new(checkpoint_path);
+    if !checkpoint.exists() {
+        error!("Checkpoint file does not exist");
+        return Err(anyhow::anyhow!("Checkpoint file does not exist"));
+    }
+    if !checkpoint.is_file() {
+        error!("Checkpoint path is not a file");
+        return Err(anyhow::anyhow!("Checkpoint path is not a file"));
+    }
+    match checkpoint.extension() {
+        Some(ext) => {
+            let ext = ext.to_str().unwrap();
+            if ext != "json" && ext != "csv" {
+                error!("Invalid checkpoint file extension: {}", ext);
+                return Err(anyhow::anyhow!(
+                    "Invalid checkpoint file extension: {}",
+                    ext
+                ));
+            } else {
+                let frames;
+                if ext == "json" {
+                    let json = std::fs::read_to_string(checkpoint)?;
+                    frames = serde_json::from_str(&json)?;
+                } else {
+                    frames = parse_export_csv(checkpoint)?;
+                }
+                let mut file_frame_count = HashMap::new();
+                let mut file_total_frames = HashMap::new();
+                for f in &frames {
+                    let file = &f.file;
+                    let count = file_frame_count.entry(file.clone()).or_insert(0);
+                    *count += 1;
+                    file_total_frames
+                        .entry(file.clone())
+                        .or_insert(f.total_frames);
+
+                    if let Some(total_frames) = file_total_frames.get(&file) {
+                        if let Some(frame_count) = file_frame_count.get(&file) {
+                            if total_frames == frame_count {
+                                all_files.remove(&file);
+                            }
+                        }
+                    }
+                }
+                export_data.lock().unwrap().extend_from_slice(&frames);
+                Ok(all_files)
+            }
+        }
+        None => {
+            error!("Invalid checkpoint file extension");
+            return Err(anyhow::anyhow!("Invalid checkpoint file extension"));
+        }
+    }
 }

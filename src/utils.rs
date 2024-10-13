@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use walkdir::WalkDir;
+use walkdir::{WalkDir, DirEntry};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Bbox {
@@ -95,33 +96,40 @@ pub fn sample_evenly<T: Clone>(list: &[T], sample_size: usize) -> (Vec<T>, Vec<u
     (sampled_elements, sampled_indexes)
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Hash)]
 pub struct FileItem {
     pub folder_id: usize,
     pub file_id: usize,
     pub file_path: PathBuf,
 }
 
-pub fn index_files_and_folders(folder_path: &str) -> Vec<FileItem> {
+impl Eq for FileItem {}
+
+fn is_label(entry: &DirEntry) -> bool {
+    let skip_dirs = ["Animal", "Person", "Vehicle", "Blank"];
+    entry
+        .file_name()
+        .to_str()
+        .map(|s| skip_dirs.contains(&s))
+        .unwrap_or(false)
+}
+
+pub fn index_files_and_folders(folder_path: &str) -> HashSet<FileItem> {
     let mut folder_id: usize = 0;
     let mut file_id: usize = 0;
-    let mut file_paths = Vec::new();
+    let mut file_paths = HashSet::new();
+    
 
-    for entry in WalkDir::new(folder_path)
-        .into_iter()
-        .filter_map(|entry| entry.ok())
-    {
-        let path = entry.path();
-
+    for entry in  WalkDir::new(folder_path).sort_by_file_name().into_iter().filter_entry(|e| !is_label(e)) {
+        let entry = entry.unwrap();
         if entry.file_type().is_dir() {
             folder_id += 1;
         } else if entry.file_type().is_file() {
-            // 判断文件是否是视频或照片
-            if is_video_photo(path) {
-                file_paths.push(FileItem {
+            if is_video_photo(entry.path()) {
+                file_paths.insert(FileItem {
                     folder_id,
                     file_id,
-                    file_path: path.to_path_buf(),
+                    file_path: entry.path().to_path_buf(),
                 });
                 file_id += 1;
             }
