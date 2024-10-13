@@ -11,6 +11,7 @@ crossbeam-channel = "0.5.13"
 csv = "1.3.0"
 ffmpeg-sidecar = "1.1.2"
 image = "0.25.2"
+indicatif = { version = "0.17.8", features = ["rayon"] }
 jpeg-decoder = "0.3.1"
 ndarray = "0.16.1"
 nom-exif = "2.1.0"

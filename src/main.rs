@@ -8,6 +8,7 @@ use clap::{Parser, ValueEnum};
 use crossbeam_channel::{bounded, unbounded};
 use rayon::prelude::*;
 use tracing::{error, info, instrument, warn};
+use indicatif::{ParallelProgressIterator, ProgressBar, ProgressStyle};
 
 use export::ExportFrame;
 use utils::FileItem;
@@ -104,7 +105,7 @@ fn main() -> Result<()> {
     let args: Args = Args::parse();
     
     let guard = init_logger(args.log_level, args.log_file).expect("Failed to initialize logger");
-    
+
     if args.checkpoint == 0 {
         error!("Checkpoint should be greater than 0");
         return Ok(());
@@ -174,7 +175,12 @@ fn main() -> Result<()> {
         export_handles.push(export_handle);
     }
 
-    file_paths.par_iter().for_each(|file| {
+    let pb = ProgressBar::new(file_paths.len() as u64);
+    
+    pb.set_style(ProgressStyle::default_bar()
+        .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta})")?);
+
+    file_paths.par_iter().progress_with(pb.clone()).for_each(|file| {
         let array_q_s = array_q_s.clone();
         media_worker(file.clone(), imgsz, args.iframe_only, max_frames, array_q_s);
     });
@@ -195,6 +201,7 @@ fn main() -> Result<()> {
 
     let duration = start.elapsed();
     info!("Time elapsed: {:?}", duration);
+    pb.finish_and_clear();
 
     drop(guard);
     Ok(())
