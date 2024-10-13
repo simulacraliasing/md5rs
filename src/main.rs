@@ -8,6 +8,7 @@ use clap::{Parser, ValueEnum};
 use crossbeam_channel::{bounded, unbounded};
 use rayon::prelude::*;
 use tracing::{error, info, instrument, warn};
+use indicatif::{ParallelProgressIterator, ProgressBar, ProgressStyle};
 
 use export::ExportFrame;
 use utils::FileItem;
@@ -18,7 +19,7 @@ mod log;
 mod media;
 mod utils;
 
-use crate::detect::{detect_worker, init_ort_runtime, DetectConfig};
+use crate::detect::{detect_worker, DetectConfig};
 use crate::export::{export, export_worker, parse_export_csv};
 use crate::log::init_logger;
 use crate::media::media_worker;
@@ -35,8 +36,8 @@ struct Args {
     model: String,
 
     /// device to run the model
-    #[arg(short, long, value_enum, default_value_t = Device::Cpu)]
-    device: Device,
+    #[arg(short, long, default_value_t = String::from("cpu"))]
+    device: String,
 
     /// max frames to process per video
     #[arg(long)]
@@ -87,20 +88,6 @@ struct Args {
     resume_from: Option<String>,
 }
 
-/// Enum for devices
-#[derive(ValueEnum, Debug, Clone)]
-#[value(rename_all = "kebab-case")]
-enum Device {
-    /// CPU device
-    Cpu,
-
-    /// GPU device
-    Gpu,
-
-    /// NPU device
-    Npu,
-}
-
 /// Enum for export formats
 #[derive(ValueEnum, Debug, Clone, Copy)]
 #[value(rename_all = "kebab-case")]
@@ -116,7 +103,7 @@ enum ExportFormat {
 fn main() -> Result<()> {
 
     let args: Args = Args::parse();
-
+    
     let guard = init_logger(args.log_level, args.log_file).expect("Failed to initialize logger");
 
     if args.checkpoint == 0 {
@@ -125,13 +112,8 @@ fn main() -> Result<()> {
     }
 
     let folder_path = args.folder;
-    let device = match args.device {
-        Device::Cpu => "CPU",
-        Device::Gpu => "GPU",
-        Device::Npu => "NPU",
-    };
     let detect_config = Arc::new(DetectConfig {
-        device: device.to_string(),
+        device: args.device,
         model_path: args.model,
         target_size: args.imgsz,
         iou_thres: args.iou,
@@ -167,9 +149,6 @@ fn main() -> Result<()> {
 
     let checkpoint_counter = Arc::new(Mutex::new(0 as usize));
 
-    //batch  0.6 2.2 3.2 7.4
-    //thread 1.4 2.1 2.8
-    init_ort_runtime().expect("Failed to initialize onnxruntime");
     for _ in 0..args.workers {
         let detect_config = Arc::clone(&detect_config);
         let array_q_r = array_q_r.clone();
@@ -196,7 +175,12 @@ fn main() -> Result<()> {
         export_handles.push(export_handle);
     }
 
-    file_paths.par_iter().for_each(|file| {
+    let pb = ProgressBar::new(file_paths.len() as u64);
+    
+    pb.set_style(ProgressStyle::default_bar()
+        .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta})")?);
+
+    file_paths.par_iter().progress_with(pb.clone()).for_each(|file| {
         let array_q_s = array_q_s.clone();
         media_worker(file.clone(), imgsz, args.iframe_only, max_frames, array_q_s);
     });
@@ -217,6 +201,7 @@ fn main() -> Result<()> {
 
     let duration = start.elapsed();
     info!("Time elapsed: {:?}", duration);
+    pb.finish_and_clear();
 
     drop(guard);
     Ok(())

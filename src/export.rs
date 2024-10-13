@@ -4,6 +4,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
+use tracing::info;
 use serde::{Deserialize, Serialize};
 
 use crate::utils::{Bbox, FileItem};
@@ -61,15 +62,16 @@ pub fn export_worker(
         match export_q_r.recv() {
             Ok(export_frame) => {
                 let mut checkpoint_counter = checkpoint_counter.lock().unwrap();
-                *checkpoint_counter += 1;
-                if *checkpoint_counter % checkpoint == 0 {
+                if *checkpoint_counter % checkpoint == 0 && *checkpoint_counter != 0 {
                     let export_data = export_data.lock().unwrap();
+                    info!("Exported {} frames", export_data.len());
                     match format {
                         ExportFormat::Json => write_json(&export_data, folder_path).unwrap(),
                         ExportFormat::Csv => write_csv(&export_data, folder_path).unwrap(),
                     }
                 }
                 export_data.lock().unwrap().push(export_frame);
+                *checkpoint_counter += 1;
             }
             Err(_) => break,
         }
@@ -140,17 +142,16 @@ fn write_csv(export_data: &Vec<ExportFrame>, folder_path: &str) -> Result<()> {
 
 pub fn export(
     folder_path: &str,
-    // checkpoint: usize,
     export_data: Arc<Mutex<Vec<ExportFrame>>>,
     export_format: &ExportFormat,
 ) -> Result<()> {
+    let export_data = Arc::try_unwrap(export_data).unwrap().into_inner().unwrap();
+    info!("Exported {} frames", export_data.len());
     match export_format {
         ExportFormat::Json => {
-            let export_data = Arc::try_unwrap(export_data).unwrap().into_inner().unwrap();
             write_json(&export_data, folder_path)?;
         }
         ExportFormat::Csv => {
-            let export_data = Arc::try_unwrap(export_data).unwrap().into_inner().unwrap();
             write_csv(&export_data, folder_path)?;
         }
     }

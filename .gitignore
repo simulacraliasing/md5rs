@@ -8,3 +8,4 @@
 *.txt
 *.code-workspace
 logs/
+data/
