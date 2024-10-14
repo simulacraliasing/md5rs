@@ -1,0 +1,1 @@
+A megadetector cli

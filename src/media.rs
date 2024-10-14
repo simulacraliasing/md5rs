@@ -160,9 +160,11 @@ fn resize_with_pad(
     if width > height {
         ratio = width as f32 / imgsz as f32;
         resized_height = (height as f32 / ratio) as u32;
+        resized_height = resized_height % 2 + resized_height;
     } else {
         ratio = height as f32 / imgsz as f32;
         resized_width = (width as f32 / ratio) as u32;
+        resized_width = resized_width % 2 + resized_width;
     }
 
     let mut resized_img = DynamicImage::new(resized_width, resized_height, img.color());
