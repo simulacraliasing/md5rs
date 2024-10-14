@@ -7,7 +7,7 @@ use fast_image_resize::Resizer;
 use ffmpeg_sidecar::child::FfmpegChild;
 use ffmpeg_sidecar::command::FfmpegCommand;
 use ffmpeg_sidecar::event::{FfmpegEvent, LogLevel, OutputVideoFrame};
-use image::{DynamicImage, GenericImageView, ImageReader, RgbaImage};
+use image::{DynamicImage, GenericImageView, ImageReader};
 use jpeg_decoder::Decoder;
 use ndarray::{s, Array3, Dim};
 use nom_exif::{Exif, ExifIter, ExifTag, MediaParser, MediaSource};
@@ -145,14 +145,16 @@ fn resize_with_pad(
     let (width, height) = img.dimensions();
     let mut resized_width = imgsz;
     let mut resized_height = imgsz;
-    let mut ratio: f32;
+    let ratio: f32;
 
     if width > height {
         ratio = width as f32 / imgsz as f32;
         resized_height = (height as f32 / ratio) as u32;
+        resized_height = resized_height % 2 + resized_height;
     } else {
         ratio = height as f32 / imgsz as f32;
         resized_width = (width as f32 / ratio) as u32;
+        resized_width = resized_width % 2 + resized_width;
     }
 
     let mut resized_img = DynamicImage::new(resized_width, resized_height, img.color());
