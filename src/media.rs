@@ -3,13 +3,15 @@ use crate::utils::{sample_evenly, FileItem};
 use anyhow::Result;
 use chrono::{DateTime, Local};
 use crossbeam_channel::Sender;
+use fast_image_resize::Resizer;
 use ffmpeg_sidecar::child::FfmpegChild;
 use ffmpeg_sidecar::command::FfmpegCommand;
 use ffmpeg_sidecar::event::{FfmpegEvent, LogLevel, OutputVideoFrame};
 use image::{DynamicImage, GenericImageView, ImageReader, RgbaImage};
 use jpeg_decoder::Decoder;
-use ndarray::Array3;
+use ndarray::{s, Array3, Dim};
 use nom_exif::{Exif, ExifIter, ExifTag, MediaParser, MediaSource};
+use nshare::AsNdarray3Mut;
 use thiserror::Error;
 
 use std::fs::{metadata, File};
@@ -59,10 +61,13 @@ pub fn media_worker(
     array_q_s: Sender<ArrayItem>,
 ) {
     let mut parser = MediaParser::new();
+    let mut resizer = Resizer::new();
     if let Some(extension) = file.file_path.extension() {
         let array_q_s = array_q_s.clone();
         match extension.to_str().unwrap().to_lowercase().as_str() {
-            "jpg" | "jpeg" | "png" => process_image(file, imgsz, &mut parser, array_q_s).unwrap(),
+            "jpg" | "jpeg" | "png" => {
+                process_image(file, imgsz, &mut parser, &mut resizer, array_q_s).unwrap()
+            }
             "mp4" | "avi" | "mkv" | "mov" => {
                 process_video(file, imgsz, iframe, max_frames, array_q_s).unwrap();
             }
@@ -99,11 +104,12 @@ pub fn process_image(
     file: FileItem,
     imgsz: usize,
     parser: &mut MediaParser,
+    resizer: &mut Resizer,
     array_q_s: Sender<ArrayItem>,
 ) -> Result<()> {
     let frame_data = match decode_image(&file) {
         Ok(img) => {
-            let (img_array, pad_w, pad_h, ratio) = resize_with_pad(&img, imgsz as u32)?;
+            let (img_array, pad_w, pad_h, ratio) = resize_with_pad(&img, imgsz as u32, resizer)?;
             let shoot_time: Option<DateTime<Local>> =
                 match get_image_date(parser, &file.file_path.as_path()) {
                     Ok(shoot_time) => Some(shoot_time),
@@ -130,53 +136,46 @@ pub fn process_image(
     Ok(())
 }
 
-fn resize_with_pad(img: &DynamicImage, imgsz: u32) -> Result<(Array3<f32>, usize, usize, f32)> {
+fn resize_with_pad(
+    img: &DynamicImage,
+    imgsz: u32,
+    resizer: &mut Resizer,
+) -> Result<(Array3<f32>, usize, usize, f32)> {
     // Get the dimensions of the original image
     let (width, height) = img.dimensions();
+    let mut resized_width = imgsz;
+    let mut resized_height = imgsz;
+    let mut ratio: f32;
 
-    let ratio = width.max(height) as f32 / imgsz as f32;
-
-    // Calculate the padding needed to make the image square
-    let pad_width = ((height as i32 - width as i32).max(0) / 2) as u32;
-    let pad_height = ((width as i32 - height as i32).max(0) / 2) as u32;
-
-    let padded_width = width + 2 * pad_width;
-    let padded_height = height + 2 * pad_height;
-    // Create a new square image with padding
-    let mut padded_img = RgbaImage::new(padded_width, padded_height);
-    for x in 0..padded_width {
-        for y in 0..padded_height {
-            if x >= pad_width
-                && x < padded_width - pad_width
-                && y >= pad_height
-                && y < padded_height - pad_height
-            {
-                let pixel = img.get_pixel(x - pad_width, y - pad_height);
-                padded_img.put_pixel(x, y, pixel);
-            } else {
-                padded_img.put_pixel(x, y, image::Rgba([0, 0, 0, 255])); // Black padding
-            }
-        }
+    if width > height {
+        ratio = width as f32 / imgsz as f32;
+        resized_height = (height as f32 / ratio) as u32;
+    } else {
+        ratio = height as f32 / imgsz as f32;
+        resized_width = (width as f32 / ratio) as u32;
     }
 
-    // Resize the padded image to the target size
-    let resized_img = DynamicImage::ImageRgba8(padded_img).resize_exact(
-        imgsz,
-        imgsz,
-        image::imageops::FilterType::Lanczos3,
-    );
+    let mut resized_img = DynamicImage::new(resized_width, resized_height, img.color());
+    resizer.resize(img, &mut resized_img, None).unwrap();
 
-    // Convert the image from RGBA to RGB and return
-    let mut rgb_ndarray = Array3::zeros((3, imgsz as usize, imgsz as usize));
-    for pixel in resized_img.pixels() {
-        let (x, y) = (pixel.0 as _, pixel.1 as _);
-        let [r, g, b, _] = pixel.2 .0;
-        rgb_ndarray[[0, y, x]] = r as f32 / 255.0;
-        rgb_ndarray[[1, y, x]] = g as f32 / 255.0;
-        rgb_ndarray[[2, y, x]] = b as f32 / 255.0;
-    }
+    let mut resized_img = resized_img.to_rgb8();
 
-    Ok((rgb_ndarray, pad_width as usize, pad_width as usize, ratio))
+    let image_array = resized_img.as_ndarray3_mut().mapv(|x| x as f32 / 255.0);
+
+    let pad_width = (imgsz - resized_width) / 2;
+    let pad_height = (imgsz - resized_height) / 2;
+
+    let mut padded_array = Array3::<f32>::from_elem(Dim([3, imgsz as usize, imgsz as usize]), 0.44);
+
+    padded_array
+        .slice_mut(s![
+            ..,
+            pad_height as i32..(imgsz - pad_height) as i32,
+            pad_width as i32..(imgsz - pad_width) as i32
+        ])
+        .assign(&image_array);
+
+    Ok((padded_array, pad_width as usize, pad_width as usize, ratio))
 }
 
 pub fn process_video(
@@ -197,7 +196,7 @@ pub fn process_video(
 fn create_ffmpeg_command(video_path: &str, imgsz: usize, iframe: bool) -> Result<FfmpegChild> {
     let mut ffmpeg_command = FfmpegCommand::new();
     if iframe {
-        ffmpeg_command.args(["-skip_frame", "nokey"]);
+        ffmpeg_command.args(["-skip_frame", "nokey", "-hwaccel", "qsv"]);
     }
     let command = ffmpeg_command
         .input(video_path)
