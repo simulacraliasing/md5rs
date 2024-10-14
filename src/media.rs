@@ -7,7 +7,7 @@ use fast_image_resize::Resizer;
 use ffmpeg_sidecar::child::FfmpegChild;
 use ffmpeg_sidecar::command::FfmpegCommand;
 use ffmpeg_sidecar::event::{FfmpegEvent, LogLevel, OutputVideoFrame};
-use image::{DynamicImage, GenericImageView, ImageReader, RgbaImage};
+use image::{DynamicImage, GenericImageView, ImageReader};
 use jpeg_decoder::Decoder;
 use ndarray::{s, Array3, Dim};
 use nom_exif::{Exif, ExifIter, ExifTag, MediaParser, MediaSource};
@@ -16,7 +16,7 @@ use thiserror::Error;
 
 use std::fs::{metadata, File};
 use std::io::BufReader;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 //define meadia error
 #[derive(Error, Debug)]
@@ -53,6 +53,13 @@ pub enum ArrayItem {
     ErrFile(ErrFile),
 }
 
+fn is_hidden_file(file_path: &PathBuf) -> bool {
+    file_path
+        .file_name()
+        .map(|f| f.to_str().map(|s| s.starts_with('.')).unwrap_or(false))
+        .unwrap_or(false)
+}
+
 pub fn media_worker(
     file: FileItem,
     imgsz: usize,
@@ -62,6 +69,9 @@ pub fn media_worker(
 ) {
     let mut parser = MediaParser::new();
     let mut resizer = Resizer::new();
+    if is_hidden_file(&file.file_path) {
+        return;
+    }
     if let Some(extension) = file.file_path.extension() {
         let array_q_s = array_q_s.clone();
         match extension.to_str().unwrap().to_lowercase().as_str() {
@@ -145,7 +155,7 @@ fn resize_with_pad(
     let (width, height) = img.dimensions();
     let mut resized_width = imgsz;
     let mut resized_height = imgsz;
-    let mut ratio: f32;
+    let ratio: f32;
 
     if width > height {
         ratio = width as f32 / imgsz as f32;
@@ -196,7 +206,7 @@ pub fn process_video(
 fn create_ffmpeg_command(video_path: &str, imgsz: usize, iframe: bool) -> Result<FfmpegChild> {
     let mut ffmpeg_command = FfmpegCommand::new();
     if iframe {
-        ffmpeg_command.args(["-skip_frame", "nokey", "-hwaccel", "qsv"]);
+        ffmpeg_command.args(["-skip_frame", "nokey"]);
     }
     let command = ffmpeg_command
         .input(video_path)
@@ -229,7 +239,14 @@ fn decode_video(
     for e in input.iter()? {
         match e {
             FfmpegEvent::Log(LogLevel::Error, e) => {
-                return Err(MediaError::VideoDecodeError(e).into());
+                if e.contains("decode_slice_header error")
+                    || e.contains("Frame num change")
+                    || e.contains("error while decoding MB")
+                {
+                    continue;
+                } else {
+                    return Err(MediaError::VideoDecodeError(e).into());
+                }
             }
             FfmpegEvent::ParsedInputStream(i) => {
                 if i.stream_type.to_lowercase() == "video" {
@@ -348,10 +365,14 @@ fn get_video_date(video: &Path) -> Result<DateTime<Local>> {
 
     #[cfg(target_os = "macos")]
     {
+        use chrono::NaiveDateTime;
+        use std::os::unix::fs::MetadataExt;
         let m_time: i64 = metadata.mtime()?;
         let c_time: i64 = metadata.ctime()?;
         let shoot_time = m_time.min(c_time);
-        let shoot_time: DateTime<Local> = Local.timestamp(shoot_time, 0);
+        let offset = Local::now().offset().to_owned();
+        let shoot_time = NaiveDateTime::from_timestamp(shoot_time, 0);
+        let shoot_time = DateTime::<Local>::from_naive_utc_and_offset(shoot_time, offset);
 
         Ok(shoot_time)
     }

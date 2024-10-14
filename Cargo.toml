@@ -41,11 +41,5 @@ ort = { version = "=2.0.0-rc.6", features = ["openvino", "load-dynamic", "downlo
 [target.'cfg(target_os = "macos")'.dependencies]
 ort = { version = "=2.0.0-rc.6", features = ["load-dynamic", "download-binaries", "coreml"] }
 
-[target.aarch64-apple-darwin]
-rustflags = ["-Clink-arg=-fapple-link-rtlib"]
-
-[target.x86_64-apple-darwin]
-rustflags = ["-Clink-arg=-fapple-link-rtlib"]
-
 [profile.release]
 lto = true

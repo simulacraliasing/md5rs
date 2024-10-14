@@ -3,12 +3,12 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use anyhow::{Ok, Result};
+use anyhow::Result;
 use clap::{Parser, ValueEnum};
 use crossbeam_channel::{bounded, unbounded};
+use indicatif::{ParallelProgressIterator, ProgressBar, ProgressStyle};
 use rayon::prelude::*;
 use tracing::{error, info, instrument, warn};
-use indicatif::{ParallelProgressIterator, ProgressBar, ProgressStyle};
 
 use export::ExportFrame;
 use utils::FileItem;
@@ -101,9 +101,8 @@ enum ExportFormat {
 
 #[instrument]
 fn main() -> Result<()> {
-
     let args: Args = Args::parse();
-    
+
     let guard = init_logger(args.log_level, args.log_file).expect("Failed to initialize logger");
 
     if args.checkpoint == 0 {
@@ -125,6 +124,8 @@ fn main() -> Result<()> {
     let imgsz = args.imgsz;
     let max_frames = args.max_frames;
     let start = Instant::now();
+
+    // let _ = ort::init_from("input/onnxruntime.dll");
 
     let mut file_paths = index_files_and_folders(&folder_path);
 
@@ -176,25 +177,41 @@ fn main() -> Result<()> {
     }
 
     let pb = ProgressBar::new(file_paths.len() as u64);
-    
-    pb.set_style(ProgressStyle::default_bar()
-        .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta})")?);
 
-    file_paths.par_iter().progress_with(pb.clone()).for_each(|file| {
-        let array_q_s = array_q_s.clone();
-        media_worker(file.clone(), imgsz, args.iframe_only, max_frames, array_q_s);
-    });
+    pb.set_style(ProgressStyle::default_bar().template(
+        "{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta})",
+    )?);
+
+    file_paths
+        .par_iter()
+        .progress_with(pb.clone())
+        .for_each(|file| {
+            let array_q_s = array_q_s.clone();
+            media_worker(file.clone(), imgsz, args.iframe_only, max_frames, array_q_s);
+        });
 
     drop(array_q_s);
 
     for d_handle in detect_handles {
-        d_handle.join().unwrap();
+        match d_handle.join() {
+            Ok(_) => {}
+            Err(e) => {
+                error!("Error joining detect worker: {:?}", e);
+                std::process::exit(1);
+            }
+        }
     }
 
     drop(export_q_s);
 
     for e_handle in export_handles {
-        e_handle.join().unwrap();
+        match e_handle.join() {
+            Ok(_) => {}
+            Err(e) => {
+                error!("Error joining export worker: {:?}", e);
+                std::process::exit(1);
+            }
+        }
     }
 
     export(&folder_path, export_data, &args.export)?;
