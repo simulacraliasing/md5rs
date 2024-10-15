@@ -3,7 +3,6 @@ import os
 import shutil
 import sys
 import time
-from math import ceil
 from pathlib import Path
 
 import numpy as np
@@ -64,14 +63,14 @@ class Cluster:
     def parse_csv(self, csv: Path) -> pd.DataFrame:
         return pd.read_csv(
             csv,
-            encoding="utf-8-sig",
-            na_values=["null"],
+            encoding="utf-8",
             usecols=range(9),
-            parse_dates=["shoot_time"],
         )
-        
-    def parse_json(self, json: Path) -> pd.DataFrame:
-        return pd.read_json(json, orient="records")
+
+    def parse_json(self, json_path: Path) -> pd.DataFrame:
+        df = pd.read_json(json_path, orient="records", encoding="utf-8")
+        print(df.head())
+        return df
 
     def move_seq(
         self,
@@ -117,9 +116,13 @@ class Cluster:
         result: Path,
         guess: bool = False,
     ):
-        
+
         self.start = time.perf_counter()
-        self.df = self.parse_csv(result)
+        if result.suffix == ".json":
+            self.df = self.parse_json(result)
+        else:
+            self.df = self.parse_csv(result)
+        self.df = merge_frames(self.df)
         self.df = self.df[self.df["label"].notnull()]
         self.df["seq_id"] = np.nan
         self.df["seq_label"] = ""
@@ -160,18 +163,18 @@ class Cluster:
                 if len(seq) > 0:
                     folder_df = self.move_seq(seq, folder_path, folder_df)
             elif is_right_seq and self.is_video_time_end_time(folder_df) and guess:
-                logger.info(f"Folder {folder_path}: Fallback to Guess model")
+                logger.info(f"Processing folder {folder_path}: Fallback to Guess model")
                 folder_df = self.guess_model(folder_df, folder_path)
             elif is_right_seq and self.is_video_time_end_time(folder_df) and not guess:
-                logger.info(f"Folder {folder_path}: Fallback to No Guess model")
+                logger.info(f"Processing folder {folder_path}: Fallback to No Guess model")
                 folder_df = self.non_guess_model(folder_df, folder_path)
             elif not is_right_seq and guess:
-                logger.info(f"Folder {folder_path}: Guess model")
+                logger.info(f"Processing folder {folder_path}: Guess model")
                 folder_df = self.guess_model(folder_df, folder_path)
                 # 时间顺序不正确 按照文件名顺序分包
 
             elif not is_right_seq and not guess:
-                logger.info(f"Folder {folder_path}: No Guess Model")
+                logger.info(f"Processing folder {folder_path}: No Guess Model")
                 # 时间顺序不正确 不适用猜测模式
                 folder_df = self.non_guess_model(folder_df, folder_path)
         self.df = self.df.filter(items=["file_id", "seq_id", "seq_label", "moved"])
@@ -229,8 +232,6 @@ class Cluster:
                     file.label
                 )
                 dest = folder_path / file.label
-                self.remaining_time(file.file_id)
-                self.progress = ceil(file.file_id / self.total_file_count * 100)
                 logger.info(f"Moving {file.file_path} to {str(dest)}")
                 try:
                     shutil.move(file.file_path, dest)
@@ -329,6 +330,8 @@ if __name__ == "__main__":
         sys.exit(1)
 
     result = Path(args.result)
+
+    result = result.absolute()
 
     extension = result.suffix.lower()
 

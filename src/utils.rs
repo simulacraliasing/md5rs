@@ -114,7 +114,7 @@ fn is_label(entry: &DirEntry) -> bool {
         .unwrap_or(false)
 }
 
-pub fn index_files_and_folders(folder_path: &str) -> HashSet<FileItem> {
+pub fn index_files_and_folders(folder_path: &PathBuf) -> HashSet<FileItem> {
     let mut folder_id: usize = 0;
     let mut file_id: usize = 0;
     let mut file_paths = HashSet::new();

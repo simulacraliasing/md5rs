@@ -68,7 +68,7 @@ struct Args {
     conf: f32,
 
     /// export format
-    #[arg(long, value_enum, default_value_t = ExportFormat::Json)]
+    #[arg(short, long, value_enum, default_value_t = ExportFormat::Json)]
     export: ExportFormat,
 
     /// log level
@@ -110,7 +110,8 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
-    let folder_path = args.folder;
+    let folder_path = std::path::PathBuf::from(&args.folder);
+    let folder_path = std::fs::canonicalize(folder_path).expect("Folder doesn't exist");
     let detect_config = Arc::new(DetectConfig {
         device: args.device,
         model_path: args.model,
@@ -125,7 +126,7 @@ fn main() -> Result<()> {
     let max_frames = args.max_frames;
     let start = Instant::now();
 
-    // let _ = ort::init_from("input/onnxruntime.dll");
+    // let _ = ort::init_from("lib/onnxruntime.dll");
 
     let mut file_paths = index_files_and_folders(&folder_path);
 

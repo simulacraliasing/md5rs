@@ -9,4 +9,4 @@
 *.code-workspace
 logs/
 data/
-script/.venv*
+script/*/

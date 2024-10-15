@@ -1,17 +1,19 @@
 use std::fs::File;
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
-use tracing::info;
+use csv::WriterBuilder;
 use serde::{Deserialize, Serialize};
+use tracing::info;
 
 use crate::utils::{Bbox, FileItem};
 use crate::ExportFormat;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExportFrame {
+    #[serde(flatten)]
     pub file: FileItem,
     pub shoot_time: Option<String>,
     pub frame_index: usize,
@@ -54,7 +56,7 @@ pub fn export_worker(
     checkpoint: usize,
     checkpoint_counter: &Arc<Mutex<usize>>,
     format: &ExportFormat,
-    folder_path: &str,
+    folder_path: &PathBuf,
     export_q_r: crossbeam_channel::Receiver<ExportFrame>,
     export_data: &Arc<Mutex<Vec<ExportFrame>>>,
 ) {
@@ -78,70 +80,62 @@ pub fn export_worker(
     }
 }
 
-fn write_json(export_data: &Vec<ExportFrame>, folder_path: &str) -> Result<()> {
-    let json = serde_json::to_string_pretty(export_data).unwrap();
-    let json_path = std::path::Path::new(&folder_path).join("result.json");
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .open(json_path)
-        .unwrap();
-    file.write_all(json.as_bytes()).unwrap();
+fn write_json(export_data: &Vec<ExportFrame>, folder_path: &PathBuf) -> Result<()> {
+    let json = serde_json::to_string_pretty(export_data)?;
+    let json_path = folder_path.join("result.json");
+    let mut file = File::create(json_path)?;
+    file.write_all(json.as_bytes())?;
     Ok(())
 }
 
-fn write_csv(export_data: &Vec<ExportFrame>, folder_path: &str) -> Result<()> {
-    let csv = export_data
-        .iter()
-        .map(|export_frame| {
-            format!(
-                "{},{},{},{},{},{},{},{},{},{}",
-                export_frame.file.folder_id,
-                export_frame.file.file_id,
-                export_frame.file.file_path.to_string_lossy(),
-                export_frame
-                    .shoot_time
-                    .clone()
-                    .unwrap_or("null".to_string()),
-                export_frame.frame_index,
-                export_frame.total_frames,
-                export_frame.is_iframe,
-                format!(
-                    "\"{}\"",
-                    serde_json::to_string(&export_frame.bboxes)
-                        .unwrap_or("null".to_string())
-                        .replace("\"", "\"\"")
-                ),
-                export_frame.label.clone().unwrap_or("null".to_string()),
-                format!(
-                    "\"{}\"",
-                    export_frame
-                        .error
-                        .clone()
-                        .unwrap_or("null".to_string())
-                        .replace("\"", "\"\"")
-                )
-            )
-        })
-        .collect::<Vec<String>>()
-        .join("\n");
-    let csv_path = std::path::Path::new(&folder_path).join("result.csv");
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .open(csv_path)
-        .unwrap();
-    file.write_all(
-        "folder_id,file_id,file_path,shoot_time,frame_index,total_frames,is_iframe,bboxes,label,error\n"
-            .as_bytes(),
-    )
-    .unwrap();
-    file.write_all(csv.as_bytes()).unwrap();
+fn write_csv(export_data: &Vec<ExportFrame>, folder_path: &PathBuf) -> Result<()> {
+    let csv_path = folder_path.join("result.csv");
+    let mut wtr = WriterBuilder::new()
+        .has_headers(false)
+        .from_path(csv_path)?;
+    wtr.write_record([
+        "folder_id",
+        "file_id",
+        "file_path",
+        "shoot_time",
+        "frame_index",
+        "total_frames",
+        "is_iframe",
+        "bboxes",
+        "label",
+        "error",
+    ])?;
+    for export_frame in export_data {
+        wtr.write_record(&[
+            export_frame.file.folder_id.to_string().as_str(),
+            export_frame.file.file_id.to_string().as_str(),
+            export_frame
+                .file
+                .file_path
+                .to_string_lossy()
+                .into_owned()
+                .as_str(),
+            export_frame
+                .shoot_time
+                .clone()
+                .unwrap_or("".to_string())
+                .as_str(),
+            export_frame.frame_index.to_string().as_str(),
+            export_frame.total_frames.to_string().as_str(),
+            export_frame.is_iframe.to_string().as_str(),
+            serde_json::to_string(&export_frame.bboxes)
+                .unwrap_or("".to_string())
+                .as_str(),
+            export_frame.label.clone().unwrap_or("".to_string()).as_str(),
+            export_frame.error.clone().unwrap_or("".to_string()).as_str(),
+        ])?;
+    }
+    wtr.flush()?;
     Ok(())
 }
 
 pub fn export(
-    folder_path: &str,
+    folder_path: &PathBuf,
     export_data: Arc<Mutex<Vec<ExportFrame>>>,
     export_format: &ExportFormat,
 ) -> Result<()> {

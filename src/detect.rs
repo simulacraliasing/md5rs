@@ -127,7 +127,7 @@ pub fn process_frames(
                             frame_index: 0,
                             total_frames: 1,
                             is_iframe: config.iframe,
-                            bboxes: None,
+                            bboxes: Some(vec![]),
                             label: None,
                             error: Some(err_file.error.to_string()),
                         })
@@ -222,13 +222,13 @@ pub fn process_batch(
         let label = get_label(&nms_boxes);
 
         let shoot_time = match frames[i].shoot_time {
-            Some(shoot_time) => shoot_time.to_string(),
-            None => "null".to_string(),
+            Some(shoot_time) => Some(shoot_time.to_string()),
+            None => None,
         };
 
         let export_frame = ExportFrame {
             file: frames[i].file.clone(),
-            shoot_time: Some(shoot_time),
+            shoot_time: shoot_time,
             frame_index: frames[i].iframe_index,
             total_frames: frames[i].total_frames,
             is_iframe: config.iframe,
