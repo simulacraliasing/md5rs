@@ -369,8 +369,8 @@ fn get_video_date(video: &Path) -> Result<DateTime<Local>> {
     {
         use chrono::NaiveDateTime;
         use std::os::unix::fs::MetadataExt;
-        let m_time: i64 = metadata.mtime()?;
-        let c_time: i64 = metadata.ctime()?;
+        let m_time: i64 = metadata.mtime();
+        let c_time: i64 = metadata.ctime();
         let shoot_time = m_time.min(c_time);
         let offset = Local::now().offset().to_owned();
         let shoot_time = NaiveDateTime::from_timestamp(shoot_time, 0);
