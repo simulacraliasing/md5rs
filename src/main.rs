@@ -8,6 +8,7 @@ use clap::{Parser, ValueEnum};
 use crossbeam_channel::{bounded, unbounded};
 use indicatif::{ParallelProgressIterator, ProgressBar, ProgressStyle};
 use rayon::prelude::*;
+use rayon::ThreadPoolBuilder;
 use tracing::{error, info, instrument, warn};
 
 use export::ExportFrame;
@@ -86,6 +87,10 @@ struct Args {
     /// resume from checkpoint
     #[arg(long)]
     resume_from: Option<String>,
+
+    /// media worker number
+    #[arg(long, default_value_t = 0)]
+    media_workers: usize,
 }
 
 /// Enum for export formats
@@ -182,6 +187,11 @@ fn main() -> Result<()> {
     pb.set_style(ProgressStyle::default_bar().template(
         "{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta})",
     )?);
+
+    ThreadPoolBuilder::new()
+        .num_threads(args.media_workers)
+        .build_global()
+        .unwrap();
 
     file_paths
         .par_iter()

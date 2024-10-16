@@ -2,15 +2,15 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crate::export::ExportFrame;
-use crate::media::{ArrayItem, Frame};
-use crate::utils::{nms, Bbox};
-
 use anyhow::Result;
 use crossbeam_channel::{Receiver, RecvTimeoutError, Sender};
 use ndarray::{s, Array4, Axis};
 use ort::{inputs, ExecutionProvider, Session, SessionOutputs};
 use tracing::{debug, instrument, info, warn};
+
+use crate::export::ExportFrame;
+use crate::media::{ArrayItem, Frame};
+use crate::utils::{nms, Bbox};
 
 #[derive(Clone, Debug)]
 pub struct DetectConfig {
