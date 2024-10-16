@@ -34,6 +34,7 @@ pub fn parse_export_csv<P: AsRef<Path>>(csv: P) -> Result<Vec<ExportFrame>> {
             folder_id: frame[0].parse::<_>()?,
             file_id: frame[1].parse::<_>()?,
             file_path: frame[2].parse()?,
+            tmp_path: frame[2].parse()?,
         };
         let bboxes = frame[7].to_string().replace("\"\"", "\"");
         let bboxes = serde_json::from_str(&bboxes)?;

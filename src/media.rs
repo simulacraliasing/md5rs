@@ -70,30 +70,37 @@ pub fn media_worker(
     let mut parser = MediaParser::new();
     let mut resizer = Resizer::new();
     if is_hidden_file(&file.file_path) {
+        if &file.file_path != &file.tmp_path {
+            std::fs::remove_file(&file.tmp_path).unwrap();
+        }
         return;
     }
     if let Some(extension) = file.file_path.extension() {
         let array_q_s = array_q_s.clone();
         match extension.to_str().unwrap().to_lowercase().as_str() {
             "jpg" | "jpeg" | "png" => {
-                process_image(file, imgsz, &mut parser, &mut resizer, array_q_s).unwrap()
+                process_image(&file, imgsz, &mut parser, &mut resizer, array_q_s).unwrap();
             }
             "mp4" | "avi" | "mkv" | "mov" => {
-                process_video(file, imgsz, iframe, max_frames, array_q_s).unwrap();
+                process_video(&file, imgsz, iframe, max_frames, array_q_s).unwrap();
             }
-            _ => (),
+            _ => {
+                if file.file_path != file.tmp_path {
+                    std::fs::remove_file(&file.tmp_path).unwrap();
+                }
+            }
         }
     }
 }
 
 fn decode_image(file: &FileItem) -> Result<DynamicImage> {
-    let img = match ImageReader::open(file.file_path.as_path())
+    let img = match ImageReader::open(file.tmp_path.as_path())
         .map_err(MediaError::IoError)?
         .decode()
     {
         Ok(img) => img,
         Err(_e) => {
-            let img_reader = File::open(file.file_path.as_path()).map_err(MediaError::IoError)?;
+            let img_reader = File::open(file.tmp_path.as_path()).map_err(MediaError::IoError)?;
             let mut decoder = Decoder::new(BufReader::new(img_reader));
             let pixels = decoder.decode().map_err(MediaError::ImageDecodeError)?;
             let img = DynamicImage::ImageRgb8(
@@ -111,23 +118,23 @@ fn decode_image(file: &FileItem) -> Result<DynamicImage> {
 }
 
 pub fn process_image(
-    file: FileItem,
+    file: &FileItem,
     imgsz: usize,
     parser: &mut MediaParser,
     resizer: &mut Resizer,
     array_q_s: Sender<ArrayItem>,
 ) -> Result<()> {
-    let frame_data = match decode_image(&file) {
+    let frame_data = match decode_image(file) {
         Ok(img) => {
             let (img_array, pad_w, pad_h, ratio) = resize_with_pad(&img, imgsz as u32, resizer)?;
             let shoot_time: Option<DateTime<Local>> =
-                match get_image_date(parser, &file.file_path.as_path()) {
+                match get_image_date(parser, file.tmp_path.as_path()) {
                     Ok(shoot_time) => Some(shoot_time),
                     Err(_e) => None,
                 };
             let frame_data = Frame {
                 data: img_array,
-                file,
+                file: file.clone(),
                 width: img.width() as usize,
                 height: img.height() as usize,
                 padding: (pad_w, pad_h),
@@ -139,9 +146,16 @@ pub fn process_image(
 
             ArrayItem::Frame(frame_data)
         }
-        Err(error) => ArrayItem::ErrFile(ErrFile { file, error }),
+        Err(error) => ArrayItem::ErrFile(ErrFile {
+            file: file.clone(),
+            error,
+        }),
     };
     array_q_s.send(frame_data).expect("Send image frame failed");
+
+    if file.file_path != file.tmp_path {
+        std::fs::remove_file(&file.tmp_path).unwrap();
+    }
 
     Ok(())
 }
@@ -191,16 +205,20 @@ fn resize_with_pad(
 }
 
 pub fn process_video(
-    file: FileItem,
+    file: &FileItem,
     imgsz: usize,
     iframe: bool,
     max_frames: Option<usize>,
     array_q_s: Sender<ArrayItem>,
 ) -> Result<()> {
-    let video_path = file.file_path.to_string_lossy();
+    let video_path = file.tmp_path.to_string_lossy();
     let input = create_ffmpeg_command(&video_path, imgsz, iframe)?;
 
-    handle_ffmpeg_output(input, array_q_s, imgsz, &file, max_frames)?;
+    handle_ffmpeg_output(input, array_q_s, imgsz, file, max_frames)?;
+
+    if file.file_path != file.tmp_path {
+        std::fs::remove_file(&file.tmp_path).unwrap();
+    }
 
     Ok(())
 }
@@ -278,11 +296,11 @@ fn handle_ffmpeg_output(
             let (sampled_frames, sampled_indexes) =
                 sample_evenly(&frames, max_frames.unwrap_or(frames.len()));
 
-            let shoot_time: Option<DateTime<Local>> =
-                match get_video_date(&file.file_path.as_path()) {
-                    Ok(shoot_time) => Some(shoot_time),
-                    Err(_e) => None,
-                };
+            let shoot_time: Option<DateTime<Local>> = match get_video_date(&file.tmp_path.as_path())
+            {
+                Ok(shoot_time) => Some(shoot_time),
+                Err(_e) => None,
+            };
 
             //calculate ratio and padding
             let width = width.expect("Failed to get video width");

@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use walkdir::{WalkDir, DirEntry};
+use walkdir::{DirEntry, WalkDir};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Bbox {
@@ -101,9 +101,35 @@ pub struct FileItem {
     pub folder_id: usize,
     pub file_id: usize,
     pub file_path: PathBuf,
+    #[serde(skip_serializing)]
+    pub tmp_path: PathBuf,
 }
 
 impl Eq for FileItem {}
+
+impl FileItem {
+    pub fn new(
+        folder_id: usize,
+        file_id: usize,
+        file_path: PathBuf,
+        tmp_path: Option<PathBuf>,
+    ) -> Self {
+        match tmp_path {
+            Some(tmp_path) => Self {
+                folder_id,
+                file_id,
+                file_path,
+                tmp_path: tmp_path,
+            },
+            None => Self {
+                folder_id,
+                file_id,
+                file_path: file_path.clone(),
+                tmp_path: file_path,
+            },
+        }
+    }
+}
 
 fn is_label(entry: &DirEntry) -> bool {
     let skip_dirs = ["Animal", "Person", "Vehicle", "Blank"];
@@ -118,19 +144,18 @@ pub fn index_files_and_folders(folder_path: &PathBuf) -> HashSet<FileItem> {
     let mut folder_id: usize = 0;
     let mut file_id: usize = 0;
     let mut file_paths = HashSet::new();
-    
 
-    for entry in  WalkDir::new(folder_path).sort_by_file_name().into_iter().filter_entry(|e| !is_label(e)) {
+    for entry in WalkDir::new(folder_path)
+        .sort_by_file_name()
+        .into_iter()
+        .filter_entry(|e| !is_label(e))
+    {
         let entry = entry.unwrap();
         if entry.file_type().is_dir() {
             folder_id += 1;
         } else if entry.file_type().is_file() {
             if is_video_photo(entry.path()) {
-                file_paths.insert(FileItem {
-                    folder_id,
-                    file_id,
-                    file_path: entry.path().to_path_buf(),
-                });
+                file_paths.insert(FileItem::new(folder_id, file_id, entry.path().to_path_buf(), None));
                 file_id += 1;
             }
         }

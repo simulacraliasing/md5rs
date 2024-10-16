@@ -6,6 +6,7 @@ use std::time::Instant;
 use anyhow::Result;
 use clap::{Parser, ValueEnum};
 use crossbeam_channel::{bounded, unbounded};
+use image::buffer;
 use indicatif::{ParallelProgressIterator, ProgressBar, ProgressStyle};
 use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
@@ -16,6 +17,7 @@ use utils::FileItem;
 
 mod detect;
 mod export;
+mod io;
 mod log;
 mod media;
 mod utils;
@@ -88,9 +90,9 @@ struct Args {
     #[arg(long)]
     resume_from: Option<String>,
 
-    /// media worker number
-    #[arg(long, default_value_t = 0)]
-    media_workers: usize,
+    /// buffer path
+    #[arg(long)]
+    buffer_path: Option<String>,
 }
 
 /// Enum for export formats
@@ -131,7 +133,7 @@ fn main() -> Result<()> {
     let max_frames = args.max_frames;
     let start = Instant::now();
 
-    // let _ = ort::init_from("lib/onnxruntime.dll");
+    let _ = ort::init_from("lib/onnxruntime.dll");
 
     let mut file_paths = index_files_and_folders(&folder_path);
 
@@ -188,18 +190,41 @@ fn main() -> Result<()> {
         "{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta})",
     )?);
 
-    ThreadPoolBuilder::new()
-        .num_threads(args.media_workers)
-        .build_global()
-        .unwrap();
+    let (io_q_s, io_q_r) = bounded(100);
 
-    file_paths
-        .par_iter()
-        .progress_with(pb.clone())
-        .for_each(|file| {
-            let array_q_s = array_q_s.clone();
-            media_worker(file.clone(), imgsz, args.iframe_only, max_frames, array_q_s);
-        });
+    match args.buffer_path {
+        Some(buffer_path) => {
+            let buffer_path = std::path::PathBuf::from(buffer_path);
+            std::fs::create_dir_all(&buffer_path)?;
+            let buffer_path = std::fs::canonicalize(buffer_path)?;
+
+            let io_handle = std::thread::spawn(move || {
+                for file in file_paths.iter() {
+                    io::io_worker(&buffer_path, file, io_q_s.clone()).unwrap();
+                }
+                drop(io_q_s);
+            });
+
+            io_q_r
+                .iter()
+                .par_bridge()
+                .progress_with(pb.clone())
+                .for_each(|file| {
+                    let array_q_s = array_q_s.clone();
+                    media_worker(file, imgsz, args.iframe_only, max_frames, array_q_s);
+                });
+            io_handle.join().unwrap();
+        }
+        None => {
+            file_paths
+                .par_iter()
+                .progress_with(pb.clone())
+                .for_each(|file| {
+                    let array_q_s = array_q_s.clone();
+                    media_worker(file.clone(), imgsz, args.iframe_only, max_frames, array_q_s);
+                });
+        }
+    }
 
     drop(array_q_s);
 
