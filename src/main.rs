@@ -6,10 +6,8 @@ use std::time::Instant;
 use anyhow::Result;
 use clap::{Parser, ValueEnum};
 use crossbeam_channel::{bounded, unbounded};
-use image::buffer;
 use indicatif::{ParallelProgressIterator, ProgressBar, ProgressStyle};
 use rayon::prelude::*;
-use rayon::ThreadPoolBuilder;
 use tracing::{error, info, instrument, warn};
 
 use export::ExportFrame;
@@ -112,6 +110,15 @@ fn main() -> Result<()> {
 
     let guard = init_logger(args.log_level, args.log_file).expect("Failed to initialize logger");
 
+    let buffer_path = args.buffer_path.clone();
+
+    ctrlc::set_handler(move || {
+        info!("Cleaning up buffer before exit...");
+        cleanup_buffer(&buffer_path).unwrap();
+        std::process::exit(0);
+    })
+    .expect("Error setting Ctrl+C handler");
+
     if args.checkpoint == 0 {
         error!("Checkpoint should be greater than 0");
         return Ok(());
@@ -192,7 +199,7 @@ fn main() -> Result<()> {
 
     let (io_q_s, io_q_r) = bounded(100);
 
-    match args.buffer_path {
+    match &args.buffer_path {
         Some(buffer_path) => {
             let buffer_path = std::path::PathBuf::from(buffer_path);
             std::fs::create_dir_all(&buffer_path)?;
@@ -256,7 +263,17 @@ fn main() -> Result<()> {
     info!("Time elapsed: {:?}", duration);
     pb.finish_and_clear();
 
+    cleanup_buffer(&args.buffer_path)?;
+
     drop(guard);
+    Ok(())
+}
+
+fn cleanup_buffer(buffer_path: &Option<String>) -> Result<()> {
+    if let Some(buff_path) = buffer_path {
+        let buff_path = std::path::PathBuf::from(buff_path);
+        std::fs::remove_dir_all(&buff_path)?;
+    }
     Ok(())
 }
 

@@ -39,6 +39,7 @@ uuid = { version = "1.10.0", features = [
     "fast-rng",
     "macro-diagnostics",
 ] }
+ctrlc = { version = "3.4.5", features = ["termination"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 ort = { version = "=2.0.0-rc.6", features = [

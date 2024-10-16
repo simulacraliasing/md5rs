@@ -13,10 +13,13 @@ use ndarray::{s, Array3, Dim};
 use nom_exif::{Exif, ExifIter, ExifTag, MediaParser, MediaSource};
 use nshare::AsNdarray3Mut;
 use thiserror::Error;
+use tracing::{error, debug};
 
 use std::fs::{metadata, File};
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
+use std::thread;
+use std::time::Duration;
 
 //define meadia error
 #[derive(Error, Debug)]
@@ -84,13 +87,40 @@ pub fn media_worker(
             "mp4" | "avi" | "mkv" | "mov" => {
                 process_video(&file, imgsz, iframe, max_frames, array_q_s).unwrap();
             }
-            _ => {
-                if file.file_path != file.tmp_path {
-                    std::fs::remove_file(&file.tmp_path).unwrap();
+            _ => (),
+        }
+        if &file.file_path != &file.tmp_path {
+            remove_file_with_retries(&file.tmp_path, 3, Duration::from_secs(1)).expect("Failed to remove file");
+        }
+    }
+}
+
+fn remove_file_with_retries(file_path: &PathBuf, max_retries: u32, delay: Duration) -> Result<()> {
+    let mut attempts = 0;
+
+    while attempts < max_retries {
+        match std::fs::remove_file(file_path) {
+            Ok(_) => {
+                debug!("File removed successfully.");
+                return Ok(());
+            }
+            Err(e) => {
+                error!(
+                    "Failed to remove file: {}. Attempt {} of {}",
+                    e,
+                    attempts + 1,
+                    max_retries
+                );
+                attempts += 1;
+
+                if attempts < max_retries {
+                    thread::sleep(delay);
                 }
             }
         }
     }
+
+    Ok(())
 }
 
 fn decode_image(file: &FileItem) -> Result<DynamicImage> {
@@ -153,10 +183,6 @@ pub fn process_image(
     };
     array_q_s.send(frame_data).expect("Send image frame failed");
 
-    if file.file_path != file.tmp_path {
-        std::fs::remove_file(&file.tmp_path).unwrap();
-    }
-
     Ok(())
 }
 
@@ -215,10 +241,6 @@ pub fn process_video(
     let input = create_ffmpeg_command(&video_path, imgsz, iframe)?;
 
     handle_ffmpeg_output(input, array_q_s, imgsz, file, max_frames)?;
-
-    if file.file_path != file.tmp_path {
-        std::fs::remove_file(&file.tmp_path).unwrap();
-    }
 
     Ok(())
 }
