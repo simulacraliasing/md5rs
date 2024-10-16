@@ -131,12 +131,14 @@ impl FileItem {
     }
 }
 
-fn is_label(entry: &DirEntry) -> bool {
+fn is_skip(entry: &DirEntry) -> bool {
     let skip_dirs = ["Animal", "Person", "Vehicle", "Blank"];
     entry
         .file_name()
         .to_str()
-        .map(|s| skip_dirs.contains(&s))
+        .map(|s| {
+            skip_dirs.contains(&s) || s.starts_with('.') || s == "result.csv" || s == "result.json"
+        })
         .unwrap_or(false)
 }
 
@@ -148,14 +150,19 @@ pub fn index_files_and_folders(folder_path: &PathBuf) -> HashSet<FileItem> {
     for entry in WalkDir::new(folder_path)
         .sort_by_file_name()
         .into_iter()
-        .filter_entry(|e| !is_label(e))
+        .filter_entry(|e| !is_skip(e))
     {
         let entry = entry.unwrap();
         if entry.file_type().is_dir() {
             folder_id += 1;
         } else if entry.file_type().is_file() {
             if is_video_photo(entry.path()) {
-                file_paths.insert(FileItem::new(folder_id, file_id, entry.path().to_path_buf(), None));
+                file_paths.insert(FileItem::new(
+                    folder_id,
+                    file_id,
+                    entry.path().to_path_buf(),
+                    None,
+                ));
                 file_id += 1;
             }
         }

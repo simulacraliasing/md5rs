@@ -56,13 +56,6 @@ pub enum ArrayItem {
     ErrFile(ErrFile),
 }
 
-fn is_hidden_file(file_path: &PathBuf) -> bool {
-    file_path
-        .file_name()
-        .map(|f| f.to_str().map(|s| s.starts_with('.')).unwrap_or(false))
-        .unwrap_or(false)
-}
-
 pub fn media_worker(
     file: FileItem,
     imgsz: usize,
@@ -72,12 +65,6 @@ pub fn media_worker(
 ) {
     let mut parser = MediaParser::new();
     let mut resizer = Resizer::new();
-    if is_hidden_file(&file.file_path) {
-        if &file.file_path != &file.tmp_path {
-            std::fs::remove_file(&file.tmp_path).unwrap();
-        }
-        return;
-    }
     if let Some(extension) = file.file_path.extension() {
         let array_q_s = array_q_s.clone();
         match extension.to_str().unwrap().to_lowercase().as_str() {
