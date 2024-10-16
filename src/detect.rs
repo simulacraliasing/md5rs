@@ -6,7 +6,7 @@ use anyhow::Result;
 use crossbeam_channel::{Receiver, RecvTimeoutError, Sender};
 use ndarray::{s, Array4, Axis};
 use ort::{inputs, ExecutionProvider, Session, SessionOutputs};
-use tracing::{debug, instrument, info, warn};
+use tracing::{debug, info, instrument, warn};
 
 use crate::export::ExportFrame;
 use crate::media::{ArrayItem, Frame};
@@ -36,42 +36,70 @@ pub fn detect_worker(
 }
 
 pub fn load_model(model_path: &str, device: &str) -> Result<Session> {
+    let mut eps = Vec::new();
 
-    let coreml = ort::CoreMLExecutionProvider::default()
+    #[cfg(target_os = "macos")]
+    {
+        let coreml = ort::CoreMLExecutionProvider::default()
             .with_ane_only()
             .with_subgraphs();
-    info!("ONNX Runtime built with CoreML available: {:?}", coreml.is_available().unwrap());
+        info!(
+            "ONNX Runtime built with CoreML available: {:?}",
+            coreml.is_available().unwrap()
+        );
+        eps.push(coreml.build().error_on_failure());
+    }
 
-    let tensor_rt = ort::TensorRTExecutionProvider::default()
-        .with_engine_cache(true)
-        .with_engine_cache_path("./models")
-        .with_timing_cache(true)
-        .with_fp16(true)
-        .with_profile_min_shapes("images:1x3x1280x1280")
-        .with_profile_opt_shapes("images:2x3x1280x1280")
-        .with_profile_max_shapes("images:5x3x1280x1280")
-        .with_device_id(device.parse().unwrap_or(0));
-    info!(
-        "ONNX Runtime built with TensorRT available: {:?}",
-        tensor_rt.is_available().unwrap()
-    );
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    {
+        let tensor_rt = ort::TensorRTExecutionProvider::default()
+            .with_engine_cache(true)
+            .with_engine_cache_path("./models")
+            .with_timing_cache(true)
+            .with_fp16(true)
+            .with_profile_min_shapes("images:1x3x1280x1280")
+            .with_profile_opt_shapes("images:2x3x1280x1280")
+            .with_profile_max_shapes("images:5x3x1280x1280")
+            .with_device_id(device.parse().unwrap_or(0));
+        info!(
+            "ONNX Runtime built with TensorRT available: {:?}",
+            tensor_rt.is_available().unwrap()
+        );
+        eps.push(tensor_rt.build().error_on_failure());
 
-    let cuda = ort::CUDAExecutionProvider::default().with_device_id(device.parse().unwrap_or(0));
-    info!("ONNX Runtime built with CUDA available: {:?}", cuda.is_available().unwrap());
+        let cuda =
+            ort::CUDAExecutionProvider::default().with_device_id(device.parse().unwrap_or(0));
+        info!(
+            "ONNX Runtime built with CUDA available: {:?}",
+            cuda.is_available().unwrap()
+        );
+        eps.push(cuda.build().error_on_failure());
 
-    let open_vino = ort::OpenVINOExecutionProvider::default().with_device_type(device.to_uppercase());
-    info!("ONNX Runtime built with OpenVINO available: {:?}", open_vino.is_available().unwrap());
+        let open_vino =
+            ort::OpenVINOExecutionProvider::default().with_device_type(device.to_uppercase());
+        info!(
+            "ONNX Runtime built with OpenVINO available: {:?}",
+            open_vino.is_available().unwrap()
+        );
+        eps.push(open_vino.build().error_on_failure());
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let dml =
+            ort::DirectMLExecutionProvider::default().with_device_id(device.parse().unwrap_or(0));
+        info!(
+            "ONNX Runtime built with DirectML available: {:?}",
+            dml.is_available().unwrap()
+        );
+        eps.push(dml.build().error_on_failure());
+    }
 
     let mut model = Session::builder()?;
 
     let mut fallback = true;
 
-    for ep in vec![
-        coreml.build().error_on_failure(),
-        tensor_rt.build().error_on_failure(),
-        cuda.build().error_on_failure(),
-        open_vino.build().error_on_failure(),
-    ] {
+    for ep in eps {
         match Session::builder()?.with_execution_providers(vec![ep.clone()]) {
             Ok(m) => {
                 model = m;
@@ -81,7 +109,7 @@ pub fn load_model(model_path: &str, device: &str) -> Result<Session> {
             }
             Err(e) => {
                 warn!("Execution provider {:?} is not available: {:?}", ep, e);
-            },
+            }
         }
     }
 

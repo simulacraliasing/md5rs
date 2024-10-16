@@ -36,7 +36,9 @@ struct Args {
     #[arg(short, long, default_value_t = String::from("models/md_v5a_d_pp_fp16.onnx"))]
     model: String,
 
-    /// device to run the model
+    /// device to run the model.
+    /// Available options: cpu|gpu|npu for openvino;
+    /// 0|1|2.. for cuda, tensorrt, directml
     #[arg(short, long, default_value_t = String::from("cpu"))]
     device: String,
 
@@ -45,7 +47,7 @@ struct Args {
     max_frames: Option<usize>,
 
     /// decode only I frames in video
-    #[arg(long, default_value_t = true)]
+    #[arg(long, short, default_value_t = true)]
     iframe_only: bool,
 
     /// image size of model input
@@ -112,12 +114,13 @@ fn main() -> Result<()> {
 
     let buffer_path = args.buffer_path.clone();
 
-    ctrlc::set_handler(move || {
-        info!("Cleaning up buffer before exit...");
-        cleanup_buffer(&buffer_path).unwrap();
-        std::process::exit(0);
-    })
-    .expect("Error setting Ctrl+C handler");
+    info!("Cleaning up buffer");
+    match cleanup_buffer(&buffer_path) {
+        Ok(_) => {}
+        Err(e) => {
+            error!("Error cleaning up buffer: {:?}", e);
+        }
+    }
 
     if args.checkpoint == 0 {
         error!("Checkpoint should be greater than 0");
@@ -139,8 +142,6 @@ fn main() -> Result<()> {
     let imgsz = args.imgsz;
     let max_frames = args.max_frames;
     let start = Instant::now();
-
-    let _ = ort::init_from("lib/onnxruntime.dll");
 
     let mut file_paths = index_files_and_folders(&folder_path);
 
@@ -272,7 +273,9 @@ fn main() -> Result<()> {
 fn cleanup_buffer(buffer_path: &Option<String>) -> Result<()> {
     if let Some(buff_path) = buffer_path {
         let buff_path = std::path::PathBuf::from(buff_path);
-        std::fs::remove_dir_all(&buff_path)?;
+        if buff_path.exists() {
+            std::fs::remove_dir_all(&buff_path)?;
+        }
     }
     Ok(())
 }
