@@ -42,11 +42,13 @@ struct Args {
     #[arg(short, long, default_value_t = String::from("cpu"))]
     device: String,
 
-    /// max frames to process per video
+    /// max frames to process per video. Set to None to process all frames
     #[arg(long)]
     max_frames: Option<usize>,
 
-    /// decode only I frames in video
+    /// decode only I frames in video. 
+    /// In short, it helps decode video faster by skip harder frames. 
+    /// Check https://en.wikipedia.org/wiki/Video_compression_picture_types to understand I frames
     #[arg(long, short, default_value_t = true)]
     iframe_only: bool,
 
@@ -54,7 +56,7 @@ struct Args {
     #[arg(long, default_value_t = 1280)]
     imgsz: usize,
 
-    /// batch size
+    /// batch size. Batch size will increase 
     #[arg(short, long, default_value_t = 2)]
     batch: usize,
 
@@ -82,17 +84,23 @@ struct Args {
     #[arg(long, default_value_t = String::from("md5rs.log"))]
     log_file: String,
 
-    /// checkpoint interval
-    #[arg(long, default_value_t = 1)]
+    /// checkpoint interval.
+    /// Will export data to disk every N frames(not files!).
+    /// Set it too low could affect performance
+    #[arg(long, default_value_t = 100)]
     checkpoint: usize,
 
-    /// resume from checkpoint
+    /// resume from checkpoint file(the same path as export file unless you renamed it)
     #[arg(long)]
     resume_from: Option<String>,
 
-    /// buffer path
+    /// SSD buffer path. Could help if speed is IO bound when data stored in HDD(make sure it is a SSD path!)
     #[arg(long)]
     buffer_path: Option<String>,
+
+    /// buffer size. Max files to keep in buffer, adjust on SSD free space
+    #[arg(long, default_value_t = 20)]
+    buffer_size: usize,
 }
 
 /// Enum for export formats
@@ -198,7 +206,7 @@ fn main() -> Result<()> {
         "{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta})",
     )?);
 
-    let (io_q_s, io_q_r) = bounded(100);
+    let (io_q_s, io_q_r) = bounded(args.buffer_size);
 
     match &args.buffer_path {
         Some(buffer_path) => {
