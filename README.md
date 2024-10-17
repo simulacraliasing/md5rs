@@ -64,3 +64,7 @@ The `organize.py` script is used to organize the cameratrap media into folders n
 `python organize.py --result result.csv --guess`
 
 Sequence is determined by shoot time or filename extension pattern if shoot time is not available. Media shot in given time range is considered as a sequence. There is a guess model to determine sequence from filename extension pattern. For example, if filenames in a folder are `[IMG_0001.JPG, IMG_0002.JPG, IMG_0003.MOV, IMG_0004.JPG, IMG_0005.JPG, IMG_0006.MOV...]`, the guessed sequence is `[IMG_0001.JPG, IMG_0002.JPG, IMG_0003.MOV]`, `[IMG_0004.JPG, IMG_0005.JPG, IMG_0006.MOV]`... The guess model is experimental and may not work in all cases, use it with your own risk. You can always use the `--redo` option to restore.
+
+## Known issues
+
+FP16 model didn't use ANE(Accelerated Neural Engine) on Apple silicon. Use [FP32](https://huggingface.co/Simulacraliasing/Megadetector_v5a/resolve/main/md_v5a_d_pp.onnx?download=true) version instead.
