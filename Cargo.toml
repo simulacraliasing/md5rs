@@ -39,6 +39,8 @@ uuid = { version = "1.10.0", features = [
     "fast-rng",
     "macro-diagnostics",
 ] }
+itertools = "0.13.0"
+toml = "0.8.19"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 ort = { version = "=2.0.0-rc.6", features = [

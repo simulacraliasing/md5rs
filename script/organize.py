@@ -61,15 +61,16 @@ class Cluster:
         return cross_diff_mean > 0.5
 
     def parse_csv(self, csv: Path) -> pd.DataFrame:
-        return pd.read_csv(
+        df = pd.read_csv(
             csv,
             encoding="utf-8",
             usecols=range(9),
         )
+        df["label"] = df["label"].apply(lambda x: x.split(";") if isinstance(x, str) else None)
+        return df
 
     def parse_json(self, json_path: Path) -> pd.DataFrame:
         df = pd.read_json(json_path, orient="records", encoding="utf-8")
-        print(df.head())
         return df
 
     def move_seq(
@@ -111,6 +112,23 @@ class Cluster:
             folder_df = folder_df[folder_df["file_id"] != file.file_id]
         return folder_df
 
+    @staticmethod
+    def get_label(labels):
+        if not labels:
+            return None
+        label_map = {
+            "Animal": 0,
+            "Person": 1,
+            "Vehicle": 2,
+            "Blank": 3,
+        }
+        reverse_label_map = {v: k for k, v in label_map.items()}
+        result = 3
+        for label in labels:
+            result = min(label_map[label], result)
+        result = reverse_label_map[result]
+        return result
+
     def organize(
         self,
         result: Path,
@@ -120,8 +138,10 @@ class Cluster:
         self.start = time.perf_counter()
         if result.suffix == ".json":
             self.df = self.parse_json(result)
+            print(self.df.head())
         else:
             self.df = self.parse_csv(result)
+        self.df["label"] = self.df["label"].apply(lambda x: self.get_label(x))
         self.df = merge_frames(self.df)
         self.df = self.df[self.df["label"].notnull()]
         self.df["seq_id"] = np.nan
@@ -166,7 +186,9 @@ class Cluster:
                 logger.info(f"Processing folder {folder_path}: Fallback to Guess model")
                 folder_df = self.guess_model(folder_df, folder_path)
             elif is_right_seq and self.is_video_time_end_time(folder_df) and not guess:
-                logger.info(f"Processing folder {folder_path}: Fallback to No Guess model")
+                logger.info(
+                    f"Processing folder {folder_path}: Fallback to No Guess model"
+                )
                 folder_df = self.non_guess_model(folder_df, folder_path)
             elif not is_right_seq and guess:
                 logger.info(f"Processing folder {folder_path}: Guess model")

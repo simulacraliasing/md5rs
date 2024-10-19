@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::fs::File;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -20,7 +21,7 @@ pub struct ExportFrame {
     pub total_frames: usize,
     pub is_iframe: bool,
     pub bboxes: Option<Vec<Bbox>>,
-    pub label: Option<String>,
+    pub label: Option<HashSet<String>>,
     pub error: Option<String>,
 }
 
@@ -44,8 +45,14 @@ pub fn parse_export_csv<P: AsRef<Path>>(csv: P) -> Result<Vec<ExportFrame>> {
             frame_index: frame[4].parse::<_>()?,
             total_frames: frame[5].parse::<_>()?,
             is_iframe: frame[6].parse::<bool>()?,
-            bboxes: bboxes,
-            label: Some(frame[8].to_string()),
+            bboxes,
+            label: Some(
+                frame[8]
+                    .to_string()
+                    .split(";")
+                    .map(|s| s.to_string())
+                    .collect(),
+            ),
             error: Some(frame[9].to_string()),
         };
         export_data.push(frame_item);
@@ -127,8 +134,18 @@ fn write_csv(export_data: &Vec<ExportFrame>, folder_path: &PathBuf) -> Result<()
             serde_json::to_string(&export_frame.bboxes)
                 .unwrap_or("".to_string())
                 .as_str(),
-            export_frame.label.clone().unwrap_or("".to_string()).as_str(),
-            export_frame.error.clone().unwrap_or("".to_string()).as_str(),
+            &itertools::join(
+                export_frame
+                    .label
+                    .clone()
+                    .unwrap_or(HashSet::from(["".to_string()])),
+                ";",
+            ),
+            export_frame
+                .error
+                .clone()
+                .unwrap_or("".to_string())
+                .as_str(),
         ])?;
     }
     wtr.flush()?;

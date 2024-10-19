@@ -1,22 +1,25 @@
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use crossbeam_channel::{Receiver, RecvTimeoutError, Sender};
 use ndarray::{s, Array4, Axis};
-use ort::{inputs, ExecutionProvider, Session, SessionOutputs};
+use ort::{inputs, ExecutionProviderDispatch, Session, SessionOutputs};
 use tracing::{debug, info, instrument, warn};
 
 use crate::export::ExportFrame;
 use crate::media::{ArrayItem, Frame};
-use crate::utils::{nms, Bbox};
+use crate::utils::{nms, Bbox, Ep, EpDict};
 
 #[derive(Clone, Debug)]
 pub struct DetectConfig {
     pub device: String,
-    pub model_path: String,
+    pub model_path: PathBuf,
     pub target_size: usize,
+    pub class_map: HashMap<usize, String>,
     pub conf_thres: f32,
     pub iou_thres: f32,
     pub batch_size: usize,
@@ -26,98 +29,77 @@ pub struct DetectConfig {
 
 pub fn detect_worker(
     config: Arc<DetectConfig>,
+    ep_dict: EpDict,
     array_q_recv: Receiver<ArrayItem>,
     export_q_s: Sender<ExportFrame>,
 ) -> thread::JoinHandle<()> {
     thread::spawn(move || {
-        let model = load_model(&config.model_path, &config.device).expect("Failed to load model");
+        let mut ep = ort::CPUExecutionProvider::default().build();
+        for ep_info in ep_dict.eps {
+            if ep_info.available {
+                match ep_info.ep {
+                    Ep::CoreML => {
+                        ep = ort::CoreMLExecutionProvider::default()
+                            .with_ane_only()
+                            .with_subgraphs()
+                            .build();
+                    }
+                    Ep::TensorRT => {
+                        ep = ort::TensorRTExecutionProvider::default()
+                            .with_engine_cache(true)
+                            .with_engine_cache_path("./models")
+                            .with_timing_cache(true)
+                            .with_fp16(true)
+                            .with_profile_min_shapes(format!(
+                                "images:1x3x{}x{}",
+                                config.target_size, config.target_size
+                            ))
+                            .with_profile_opt_shapes(format!(
+                                "images:2x3x{}x{}",
+                                config.target_size, config.target_size
+                            ))
+                            .with_profile_max_shapes(format!(
+                                "images:5x3x{}x{}",
+                                config.target_size, config.target_size
+                            ))
+                            .with_device_id(config.device.parse().unwrap_or(0))
+                            .build();
+                    }
+                    Ep::CUDA => {
+                        ep = ort::CUDAExecutionProvider::default()
+                            .with_device_id(config.device.parse().unwrap_or(0))
+                            .build();
+                    }
+                    Ep::OpenVINO => {
+                        ep = ort::OpenVINOExecutionProvider::default()
+                            .with_device_type(config.device.to_uppercase())
+                            .build();
+                    }
+                    Ep::DirectML => {
+                        ep = ort::DirectMLExecutionProvider::default()
+                            .with_device_id(config.device.parse().unwrap_or(0))
+                            .build();
+                    }
+                    Ep::Cpu => {
+                        ep = ort::CPUExecutionProvider::default().build();
+                    }
+                }
+                break;
+            }
+        }
+
+        info!("Execution provider: {:?}", ep);
+
+        let model = load_model(&config.model_path, ep).expect("Failed to load model");
         process_frames(array_q_recv, export_q_s, &model, &config).unwrap();
     })
 }
 
-pub fn load_model(model_path: &str, device: &str) -> Result<Session> {
-    let mut eps = Vec::new();
+pub fn load_model(model_path: &Path, ep: ExecutionProviderDispatch) -> Result<Session> {
+    let model = Session::builder()?
+        .with_execution_providers([ep])?
+        .commit_from_file(model_path)?;
 
-    #[cfg(target_os = "macos")]
-    {
-        let coreml = ort::CoreMLExecutionProvider::default()
-            .with_ane_only()
-            .with_subgraphs();
-        info!(
-            "ONNX Runtime built with CoreML available: {:?}",
-            coreml.is_available().unwrap()
-        );
-        eps.push(coreml.build().error_on_failure());
-    }
-
-    #[cfg(any(target_os = "linux", target_os = "windows"))]
-    {
-        let tensor_rt = ort::TensorRTExecutionProvider::default()
-            .with_engine_cache(true)
-            .with_engine_cache_path("./models")
-            .with_timing_cache(true)
-            .with_fp16(true)
-            .with_profile_min_shapes("images:1x3x1280x1280")
-            .with_profile_opt_shapes("images:2x3x1280x1280")
-            .with_profile_max_shapes("images:5x3x1280x1280")
-            .with_device_id(device.parse().unwrap_or(0));
-        info!(
-            "ONNX Runtime built with TensorRT available: {:?}",
-            tensor_rt.is_available().unwrap()
-        );
-        eps.push(tensor_rt.build().error_on_failure());
-
-        let cuda =
-            ort::CUDAExecutionProvider::default().with_device_id(device.parse().unwrap_or(0));
-        info!(
-            "ONNX Runtime built with CUDA available: {:?}",
-            cuda.is_available().unwrap()
-        );
-        eps.push(cuda.build().error_on_failure());
-
-        let open_vino =
-            ort::OpenVINOExecutionProvider::default().with_device_type(device.to_uppercase());
-        info!(
-            "ONNX Runtime built with OpenVINO available: {:?}",
-            open_vino.is_available().unwrap()
-        );
-        eps.push(open_vino.build().error_on_failure());
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        let dml =
-            ort::DirectMLExecutionProvider::default().with_device_id(device.parse().unwrap_or(0));
-        info!(
-            "ONNX Runtime built with DirectML available: {:?}",
-            dml.is_available().unwrap()
-        );
-        eps.push(dml.build().error_on_failure());
-    }
-
-    let mut model = Session::builder()?;
-
-    let mut fallback = true;
-
-    for ep in eps {
-        match Session::builder()?.with_execution_providers(vec![ep.clone()]) {
-            Ok(m) => {
-                model = m;
-                fallback = false;
-                info!("Using execution provider: {:?}", ep);
-                break;
-            }
-            Err(e) => {
-                warn!("Execution provider {:?} is not available: {:?}", ep, e);
-            }
-        }
-    }
-
-    if fallback {
-        warn!("No execution providers registered successfully. Falling back to CPU.");
-    }
-
-    let model = model.commit_from_file(model_path)?;
     Ok(model)
 }
 
@@ -247,7 +229,7 @@ pub fn process_batch(
         }
         let nms_boxes = nms(&mut boxes, true, 100, config.iou_thres);
 
-        let label = get_label(&nms_boxes);
+        let label = get_label(&nms_boxes, &config.class_map);
 
         let shoot_time = match frames[i].shoot_time {
             Some(shoot_time) => Some(shoot_time.to_string()),
@@ -269,19 +251,22 @@ pub fn process_batch(
     Ok(())
 }
 
-fn get_label(bboxes: &Vec<Bbox>) -> String {
+fn get_label(bboxes: &Vec<Bbox>, cls_map: &HashMap<usize, String>) -> HashSet<String> {
+    let mut labels = HashSet::new();
     if bboxes.is_empty() {
-        return "Blank".to_string();
+        labels.insert("Blank".to_string());
+        return labels;
     }
-    let mut class_id = bboxes[0].class;
+
     for bbox in bboxes {
-        class_id = class_id.min(bbox.class);
+        let class_id = bbox.class;
+
+        let label = match cls_map.get(&class_id) {
+            Some(label) => label.to_string(),
+            None => Err(anyhow!("Class ID not found")).unwrap(),
+        };
+
+        labels.insert(label);
     }
-    let label = match class_id {
-        0 => "Animal".to_string(),
-        1 => "Person".to_string(),
-        2 => "Vehicle".to_string(),
-        _ => "Blank".to_string(),
-    };
-    label
+    labels
 }

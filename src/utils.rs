@@ -1,6 +1,12 @@
-use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashMap, HashSet};
+use std::fs::File;
+use std::io::Write;
 use std::path::{Path, PathBuf};
+
+use anyhow::Result;
+use ort::{ExecutionProvider, Session};
+use serde::{Deserialize, Serialize};
+use tracing::info;
 use walkdir::{DirEntry, WalkDir};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -180,5 +186,332 @@ fn is_video_photo(path: &Path) -> bool {
         }
     } else {
         false
+    }
+}
+
+// EP availability check
+
+#[derive(Serialize, Deserialize, Clone)]
+pub enum Ep {
+    CoreML,
+    TensorRT,
+    CUDA,
+    OpenVINO,
+    DirectML,
+    Cpu,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct EpInfo {
+    pub ep: Ep,
+    pub available: bool,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct EpDict {
+    pub device: String,
+    pub eps: Vec<EpInfo>,
+}
+
+impl EpDict {
+    pub fn save(self) -> Result<()> {
+        // save dict to json
+        let json = serde_json::to_string_pretty(&self)?;
+        let json_file_name = std::format!("epinfo_{}.json", self.device);
+        let json_path = Path::new(&json_file_name);
+        let mut file = File::create(json_path)?;
+        file.write_all(json.as_bytes())?;
+        Ok(())
+    }
+}
+
+fn check_ep_availability(device: &str) -> Result<()> {
+    info!("Checking available execution providers");
+
+    let mut ep_infos = Vec::new();
+
+    #[cfg(target_os = "macos")]
+    {
+        let coreml = ort::CoreMLExecutionProvider::default();
+        if coreml.is_available().unwrap() {
+            match Session::builder()?
+                .with_execution_providers(vec![coreml.build().error_on_failure()])
+            {
+                Ok(_) => {
+                    let ep_info = EpInfo {
+                        ep: Ep::CoreML,
+                        available: true,
+                    };
+                    ep_infos.push(ep_info);
+                }
+                Err(_e) => {
+                    let ep_info = EpInfo {
+                        ep: Ep::CoreML,
+                        available: false,
+                    };
+                    ep_infos.push(ep_info);
+                }
+            }
+        } else {
+            let ep_info = EpInfo {
+                ep: Ep::CoreML,
+                available: false,
+            };
+            ep_infos.push(ep_info);
+        }
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    {
+        let tensor_rt =
+            ort::TensorRTExecutionProvider::default().with_device_id(device.parse().unwrap_or(0));
+        if tensor_rt.is_available().unwrap() {
+            match Session::builder()?
+                .with_execution_providers(vec![tensor_rt.build().error_on_failure()])
+            {
+                Ok(_) => {
+                    let ep_info = EpInfo {
+                        ep: Ep::TensorRT,
+                        available: true,
+                    };
+                    ep_infos.push(ep_info);
+                }
+                Err(_e) => {
+                    let ep_info = EpInfo {
+                        ep: Ep::TensorRT,
+                        available: false,
+                    };
+                    ep_infos.push(ep_info);
+                }
+            }
+        } else {
+            let ep_info = EpInfo {
+                ep: Ep::TensorRT,
+                available: false,
+            };
+            ep_infos.push(ep_info);
+        }
+
+        let cuda =
+            ort::CUDAExecutionProvider::default().with_device_id(device.parse().unwrap_or(0));
+        if cuda.is_available().unwrap() {
+            match Session::builder()?
+                .with_execution_providers(vec![cuda.build().error_on_failure()])
+            {
+                Ok(_) => {
+                    let ep_info = EpInfo {
+                        ep: Ep::CUDA,
+                        available: true,
+                    };
+                    ep_infos.push(ep_info);
+                }
+                Err(_e) => {
+                    let ep_info = EpInfo {
+                        ep: Ep::CUDA,
+                        available: false,
+                    };
+                    ep_infos.push(ep_info);
+                }
+            }
+        } else {
+            let ep_info = EpInfo {
+                ep: Ep::CUDA,
+                available: false,
+            };
+            ep_infos.push(ep_info);
+        }
+
+        let open_vino =
+            ort::OpenVINOExecutionProvider::default().with_device_type(device.to_uppercase());
+        if open_vino.is_available().unwrap() {
+            match Session::builder()?
+                .with_execution_providers(vec![open_vino.build().error_on_failure()])
+            {
+                Ok(_) => {
+                    let ep_info = EpInfo {
+                        ep: Ep::OpenVINO,
+                        available: true,
+                    };
+                    ep_infos.push(ep_info);
+                }
+                Err(_e) => {
+                    let ep_info = EpInfo {
+                        ep: Ep::OpenVINO,
+                        available: false,
+                    };
+                    ep_infos.push(ep_info);
+                }
+            }
+        } else {
+            let ep_info = EpInfo {
+                ep: Ep::OpenVINO,
+                available: false,
+            };
+            ep_infos.push(ep_info);
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let dml =
+            ort::DirectMLExecutionProvider::default().with_device_id(device.parse().unwrap_or(0));
+        if dml.is_available().unwrap() {
+            match Session::builder()?.with_execution_providers(vec![dml.build().error_on_failure()])
+            {
+                Ok(_) => {
+                    let ep_info = EpInfo {
+                        ep: Ep::DirectML,
+                        available: true,
+                    };
+                    ep_infos.push(ep_info);
+                }
+                Err(_e) => {
+                    let ep_info = EpInfo {
+                        ep: Ep::DirectML,
+                        available: false,
+                    };
+                    ep_infos.push(ep_info);
+                }
+            }
+        } else {
+            let ep_info = EpInfo {
+                ep: Ep::DirectML,
+                available: false,
+            };
+            ep_infos.push(ep_info);
+        }
+    }
+
+    let ep_dict = EpDict {
+        device: device.to_string(),
+        eps: ep_infos,
+    };
+
+    ep_dict.save()?;
+
+    Ok(())
+}
+
+pub fn read_ep_dict(device: &str) -> Result<EpDict> {
+    if device == "cpu" {
+        return Ok(EpDict {
+            device: device.to_string(),
+            eps: vec![EpInfo {
+                ep: Ep::Cpu,
+                available: true,
+            }],
+        });
+    }
+    let json_file_name = std::format!("epinfo_{}.json", device);
+    let json_path = Path::new(&json_file_name);
+    let ep_dict: EpDict;
+    if json_path.exists() {
+        let json = std::fs::read_to_string(json_path)?;
+        ep_dict = serde_json::from_str(&json)?;
+    } else {
+        check_ep_availability(device)?;
+        ep_dict = read_ep_dict(device)?;
+    }
+    Ok(ep_dict)
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ModelConfig {
+    pub name: String,
+    pub path: PathBuf,
+    pub imgsz: usize,
+    pub classes: BTreeSet<String>,
+}
+
+impl PartialEq for ModelConfig {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name
+            && self.path == other.path
+            && self.imgsz == other.imgsz
+            && self.classes == other.classes
+    }
+}
+
+impl Eq for ModelConfig {}
+
+impl ModelConfig {
+    pub fn save<P: AsRef<Path>>(&self, toml: P) -> Result<()> {
+        let toml_str = toml::to_string_pretty(&self)?;
+        let mut file = File::create(toml)?;
+        file.write_all(toml_str.as_bytes())?;
+        Ok(())
+    }
+
+    pub fn class_map(&self) -> HashMap<usize, String> {
+        let mut class_map = HashMap::new();
+        for (i, class) in self.classes.iter().enumerate() {
+            class_map.insert(i, class.clone());
+        }
+        class_map
+    }
+}
+
+pub fn load_model_config<P: AsRef<Path>>(config: P) -> Result<ModelConfig> {
+    let toml_str = std::fs::read_to_string(config)?;
+    let model_config: ModelConfig = toml::from_str(&toml_str)?;
+    Ok(model_config)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_model_config_save() {
+        let model = ModelConfig {
+            name: "mdv5a".to_string(),
+            path: PathBuf::from("models/md_v5a_d_pp.onnx"),
+            imgsz: 1280,
+            classes: BTreeSet::from([
+                "Animal".to_string(),
+                "Person".to_string(),
+                "Vehicle".to_string(),
+            ]),
+        };
+        let toml_path = "models/md5va.toml";
+        model.save(toml_path).unwrap();
+        let target = load_model_config(toml_path).unwrap();
+        assert_eq!(model, target);
+    }
+
+    #[test]
+    fn test_model_config_class_map() {
+        let model = ModelConfig {
+            name: "mdv5a".to_string(),
+            path: PathBuf::from("models/md_v5a_d_pp.onnx"),
+            imgsz: 1280,
+            classes: BTreeSet::from([
+                "Animal".to_string(),
+                "Person".to_string(),
+                "Vehicle".to_string(),
+            ]),
+        };
+        let target = HashMap::from([
+            (0, "Animal".to_string()),
+            (1, "Person".to_string()),
+            (2, "Vehicle".to_string()),
+        ]);
+        assert_eq!(model.class_map(), target);
+    }
+
+    #[test]
+    fn test_load_model_config() {
+        let model = load_model_config("models/mdv5a.toml").unwrap();
+        let target = ModelConfig {
+            name: "mdv5a".to_string(),
+            path: PathBuf::from("models/md_v5a_d_pp.onnx"),
+            imgsz: 1280,
+            classes: BTreeSet::from([
+                "Animal".to_string(),
+                "Person".to_string(),
+                "Vehicle".to_string(),
+            ]),
+        };
+        assert_eq!(model, target);
     }
 }

@@ -1,9 +1,9 @@
 use crate::utils::{sample_evenly, FileItem};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use chrono::{DateTime, Local};
 use crossbeam_channel::Sender;
-use fast_image_resize::Resizer;
+use fast_image_resize::{ResizeAlg, ResizeOptions, Resizer};
 use ffmpeg_sidecar::child::FfmpegChild;
 use ffmpeg_sidecar::command::FfmpegCommand;
 use ffmpeg_sidecar::event::{FfmpegEvent, LogLevel, OutputVideoFrame};
@@ -13,7 +13,7 @@ use ndarray::{s, Array3, Dim};
 use nom_exif::{Exif, ExifIter, ExifTag, MediaParser, MediaSource};
 use nshare::AsNdarray3Mut;
 use thiserror::Error;
-use tracing::{error, debug};
+use tracing::{debug, error, warn};
 
 use std::fs::{metadata, File};
 use std::io::BufReader;
@@ -77,7 +77,8 @@ pub fn media_worker(
             _ => (),
         }
         if &file.file_path != &file.tmp_path {
-            remove_file_with_retries(&file.tmp_path, 3, Duration::from_secs(1)).expect("Failed to remove file");
+            remove_file_with_retries(&file.tmp_path, 3, Duration::from_secs(1))
+                .expect("Failed to remove file");
         }
     }
 }
@@ -117,6 +118,7 @@ fn decode_image(file: &FileItem) -> Result<DynamicImage> {
     {
         Ok(img) => img,
         Err(_e) => {
+            warn!("Failed to decode image with ImageReader. Trying jpeg_decoder. {:?}", _e);
             let img_reader = File::open(file.tmp_path.as_path()).map_err(MediaError::IoError)?;
             let mut decoder = Decoder::new(BufReader::new(img_reader));
             let pixels = decoder.decode().map_err(MediaError::ImageDecodeError)?;
@@ -195,7 +197,12 @@ fn resize_with_pad(
     }
 
     let mut resized_img = DynamicImage::new(resized_width, resized_height, img.color());
-    resizer.resize(img, &mut resized_img, None).unwrap();
+
+    let resize_option = ResizeOptions::new().resize_alg(ResizeAlg::Nearest);
+
+    resizer
+        .resize(img, &mut resized_img, &resize_option)
+        .unwrap();
 
     let mut resized_img = resized_img.to_rgb8();
 
@@ -361,7 +368,7 @@ fn get_image_date(parser: &mut MediaParser, image: &Path) -> Result<DateTime<Loc
     let exif: Exif = iter.into();
     let shoot_time = exif
         .get(ExifTag::DateTimeOriginal)
-        .unwrap_or(exif.get(ExifTag::ModifyDate).unwrap());
+        .or_else(|| exif.get(ExifTag::ModifyDate)).context("Neither DateTimeOriginal nor ModifyDate found")?;
     let shoot_time = shoot_time.as_time().unwrap().with_timezone(&Local);
 
     Ok(shoot_time)

@@ -11,7 +11,7 @@ use rayon::prelude::*;
 use tracing::{error, info, instrument, warn};
 
 use export::ExportFrame;
-use utils::FileItem;
+use utils::{load_model_config, read_ep_dict, FileItem};
 
 mod detect;
 mod export;
@@ -33,7 +33,7 @@ struct Args {
     folder: String,
 
     /// path to the model
-    #[arg(short, long, default_value_t = String::from("models/md_v5a_d_pp_fp16.onnx"))]
+    #[arg(short, long, default_value_t = String::from("models/md_v5a_fp16.toml"))]
     model: String,
 
     /// device to run the model.
@@ -46,17 +46,13 @@ struct Args {
     #[arg(long)]
     max_frames: Option<usize>,
 
-    /// decode only I frames in video. 
-    /// In short, it helps decode video faster by skip harder frames. 
+    /// decode only I frames in video.
+    /// In short, it helps decode video faster by skip harder frames.
     /// Check https://en.wikipedia.org/wiki/Video_compression_picture_types to understand I frames
     #[arg(long, short, default_value_t = true)]
     iframe_only: bool,
 
-    /// image size of model input
-    #[arg(long, default_value_t = 1280)]
-    imgsz: usize,
-
-    /// batch size. Batch size will increase 
+    /// batch size. Batch size will increase
     #[arg(short, long, default_value_t = 2)]
     batch: usize,
 
@@ -135,19 +131,25 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
+    let ep_dict = read_ep_dict(&args.device)?;
+
     let folder_path = std::path::PathBuf::from(&args.folder);
     let folder_path = std::fs::canonicalize(folder_path).expect("Folder doesn't exist");
+
+    let model_config = load_model_config(&args.model).expect("Failed to load model config");
+
     let detect_config = Arc::new(DetectConfig {
         device: args.device,
-        model_path: args.model,
-        target_size: args.imgsz,
+        model_path: model_config.path.clone(),
+        target_size: model_config.imgsz,
+        class_map: model_config.class_map(),
         iou_thres: args.iou,
         conf_thres: args.conf,
         batch_size: args.batch,
         timeout: 50,
         iframe: args.iframe_only,
     });
-    let imgsz = args.imgsz;
+    let imgsz = model_config.imgsz;
     let max_frames = args.max_frames;
     let start = Instant::now();
 
@@ -178,7 +180,8 @@ fn main() -> Result<()> {
         let detect_config = Arc::clone(&detect_config);
         let array_q_r = array_q_r.clone();
         let export_q_s = export_q_s.clone();
-        let detect_handle = detect_worker(detect_config, array_q_r, export_q_s);
+        let ep_dict = ep_dict.clone();
+        let detect_handle = detect_worker(detect_config, ep_dict, array_q_r, export_q_s);
         detect_handles.push(detect_handle);
     }
 
