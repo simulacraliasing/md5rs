@@ -6,17 +6,35 @@ To process a folder of cameratrap media with MegaDetector and export result in c
 
 Windows:
 
-`md5rs.exe -f <folder_to_process> -d 0 -i -m <model_path> -max-frames 3 -e csv`
+`md5rs.exe -f <folder_to_process> -d 0 -i -m models/md_v5a.toml -max-frames 3 -e csv`
 
 Linux/MacOS:
 
-`md5rs -f <folder_to_process> -d 0 -i -m <model_path> -max-frames 3 -e csv`
-
-A pre-converted onnx model from md_v5a.0.0.pt can be downloaded [here](https://huggingface.co/Simulacraliasing/Megadetector_v5a/resolve/main/md_v5a_d_pp_fp16.onnx?download=true)
+`md5rs -f <folder_to_process> -d 0 -i -m models/md_v5a.toml -max-frames 3 -e csv`
 
 Supported export formats are `csv`, `json`.
 
 Run `md5rs -h` to see all available options.
+
+### Default Models
+
+#### [MegaDetector](https://github.com/microsoft/CameraTraps/blob/main/megadetector.md)
+
+##### MegaDetector v5a
+
+[FP32 model](https://huggingface.co/Simulacraliasing/Megadetector/resolve/main/md_v5a_d_pp.onnx?download=true)
+
+[FP16 model](https://huggingface.co/Simulacraliasing/Megadetector/resolve/main/md_v5a_d_pp.onnx?download=true)
+
+Converted onnx model from [md_v5a.0.0.pt](https://github.com/microsoft/CameraTraps/releases/download/v5.0/md_v5a.0.0.pt) and add dynamic batch and some postprocessing.
+
+##### MegaDetector v6b (Beta)
+
+[FP32 model]("https://huggingface.co/Simulacraliasing/Megadetector/resolve/main/md_v6b_d_pp.onnx?download=true")
+
+[FP16 model]("https://huggingface.co/Simulacraliasing/Megadetector/resolve/main/md_v6b_d_pp_fp16.onnx?download=true")
+
+Converted onnx model from [MDV6b-yolov9c.pt](https://zenodo.org/records/11192829/files/MDV6b-yolov9c.pt?download=1) and add dynamic batch and some postprocessing.
 
 ## Key features
 
@@ -67,4 +85,4 @@ Sequence is determined by shoot time or filename extension pattern if shoot time
 
 ## Known issues
 
-FP16 model didn't use ANE(Accelerated Neural Engine) on Apple silicon. Use [FP32](https://huggingface.co/Simulacraliasing/Megadetector_v5a/resolve/main/md_v5a_d_pp.onnx?download=true) version instead.
+FP16 model didn't use ANE(Accelerated Neural Engine) on Apple silicon. Use FP32 model instead.

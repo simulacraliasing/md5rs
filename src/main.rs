@@ -32,7 +32,7 @@ struct Args {
     #[arg(short, long)]
     folder: String,
 
-    /// path to the model
+    /// path to the model toml file
     #[arg(short, long, default_value_t = String::from("models/md_v5a_fp16.toml"))]
     model: String,
 

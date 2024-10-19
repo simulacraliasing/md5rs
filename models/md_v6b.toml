@@ -1,0 +1,8 @@
+name = "mdv6b"
+path = "models/md_v6b_d_pp.onnx"
+imgsz = 640
+classes = [
+    "Animal",
+    "Person",
+    "Vehicle",
+]

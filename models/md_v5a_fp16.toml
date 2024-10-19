@@ -1,0 +1,8 @@
+name = "mdv5a_fp16"
+path = "models/md_v5a_d_pp_fp16.onnx"
+imgsz = 1280
+classes = [
+    "Animal",
+    "Person",
+    "Vehicle",
+]

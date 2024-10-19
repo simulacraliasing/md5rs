@@ -1,0 +1,8 @@
+name = "mdv5a"
+path = "models/md_v5a_d_pp.onnx"
+imgsz = 1280
+classes = [
+    "Animal",
+    "Person",
+    "Vehicle",
+]

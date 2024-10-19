@@ -3,7 +3,8 @@
 *.onnx
 /input
 /output
-/models
+/models/*.onnx
+/models/*.config
 /examples
 *.txt
 *.code-workspace
