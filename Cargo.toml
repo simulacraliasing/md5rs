@@ -70,3 +70,4 @@ ort = { version = "=2.0.0-rc.6", features = [
 
 [profile.release]
 lto = true
+strip = true

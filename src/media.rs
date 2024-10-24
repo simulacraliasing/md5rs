@@ -221,7 +221,7 @@ fn resize_with_pad(
         ])
         .assign(&image_array);
 
-    Ok((padded_array, pad_width as usize, pad_width as usize, ratio))
+    Ok((padded_array, pad_width as usize, pad_height as usize, ratio))
 }
 
 pub fn process_video(

@@ -13,3 +13,4 @@ data/
 script/*/
 /buffer
 epinfo_*
+/release

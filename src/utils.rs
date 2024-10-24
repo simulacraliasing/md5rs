@@ -434,6 +434,7 @@ impl PartialEq for ModelConfig {
 
 impl Eq for ModelConfig {}
 
+#[allow(dead_code)]
 impl ModelConfig {
     pub fn save<P: AsRef<Path>>(&self, toml: P) -> Result<()> {
         let toml_str = toml::to_string_pretty(&self)?;

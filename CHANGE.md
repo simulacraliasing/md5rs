@@ -6,6 +6,16 @@
 
 ## Changes
 
+### Version 0.1.2
+
+Features:
+
+- Add multiple device support. Example to run 1 workers on device 0 and 2 worker on device 1:`$ md5rs -d 0 -w 1 -d 1 -w 2`, run both on integrated GPU and discrete GPU: `$ md5rs -d gpu -w 1 -d 0 -w 2`.
+
+Bug fixes:
+
+- Fix resize_with_pad wrong returned dimension.
+
 ### Version 0.1.1
 
 Features:

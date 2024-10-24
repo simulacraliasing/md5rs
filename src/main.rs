@@ -33,17 +33,17 @@ struct Args {
     folder: String,
 
     /// path to the model toml file
-    #[arg(short, long, default_value_t = String::from("models/md_v5a_fp16.toml"))]
+    #[arg(short, long, default_value = "models/md_v5a_fp16.toml")]
     model: String,
 
     /// device to run the model.
     /// Available options: cpu|gpu|npu for openvino;
     /// 0|1|2.. for cuda, tensorrt, directml
-    #[arg(short, long, default_value_t = String::from("cpu"))]
-    device: String,
+    #[arg(short, long, default_value = "cpu")]
+    device: Vec<String>,
 
     /// max frames to process per video. Set to None to process all frames
-    #[arg(long)]
+    #[arg(long, default_value = "3")]
     max_frames: Option<usize>,
 
     /// decode only I frames in video.
@@ -57,8 +57,8 @@ struct Args {
     batch: usize,
 
     /// number of detection worker threads
-    #[arg(short, long, default_value_t = 2)]
-    workers: usize,
+    #[arg(short, long, default_value = "2")]
+    workers: Vec<usize>,
 
     /// NMS IoU threshold
     #[arg(long, default_value_t = 0.45)]
@@ -73,11 +73,11 @@ struct Args {
     export: ExportFormat,
 
     /// log level
-    #[arg(long, default_value_t = String::from("info"))]
+    #[arg(long, default_value = "info")]
     log_level: String,
 
     /// log file
-    #[arg(long, default_value_t = String::from("md5rs.log"))]
+    #[arg(long, default_value = "md5rs.log")]
     log_file: String,
 
     /// checkpoint interval.
@@ -131,24 +131,11 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
-    let ep_dict = read_ep_dict(&args.device)?;
-
     let folder_path = std::path::PathBuf::from(&args.folder);
     let folder_path = std::fs::canonicalize(folder_path).expect("Folder doesn't exist");
 
     let model_config = load_model_config(&args.model).expect("Failed to load model config");
 
-    let detect_config = Arc::new(DetectConfig {
-        device: args.device,
-        model_path: model_config.path.clone(),
-        target_size: model_config.imgsz,
-        class_map: model_config.class_map(),
-        iou_thres: args.iou,
-        conf_thres: args.conf,
-        batch_size: args.batch,
-        timeout: 50,
-        iframe: args.iframe_only,
-    });
     let imgsz = model_config.imgsz;
     let max_frames = args.max_frames;
     let start = Instant::now();
@@ -170,19 +157,33 @@ fn main() -> Result<()> {
 
     let mut export_handles = vec![];
 
-    let (array_q_s, array_q_r) = bounded(args.batch * args.workers * 1);
+    let (array_q_s, array_q_r) = bounded(args.batch * args.workers.iter().sum::<usize>() * 2);
 
     let (export_q_s, export_q_r) = unbounded();
 
     let checkpoint_counter = Arc::new(Mutex::new(0 as usize));
 
-    for _ in 0..args.workers {
-        let detect_config = Arc::clone(&detect_config);
-        let array_q_r = array_q_r.clone();
-        let export_q_s = export_q_s.clone();
-        let ep_dict = ep_dict.clone();
-        let detect_handle = detect_worker(detect_config, ep_dict, array_q_r, export_q_s);
-        detect_handles.push(detect_handle);
+    for (i, d) in args.device.iter().enumerate() {
+        let detect_config = Arc::new(DetectConfig {
+            device: d.clone(),
+            model_path: model_config.path.clone(),
+            target_size: model_config.imgsz,
+            class_map: model_config.class_map(),
+            iou_thres: args.iou,
+            conf_thres: args.conf,
+            batch_size: args.batch,
+            timeout: 50,
+            iframe: args.iframe_only,
+        });
+        let ep_dict = read_ep_dict(&d)?;
+        for _ in 0..args.workers[i] {
+            let detect_config = Arc::clone(&detect_config);
+            let array_q_r = array_q_r.clone();
+            let export_q_s = export_q_s.clone();
+            let ep_dict = ep_dict.clone();
+            let detect_handle = detect_worker(detect_config, ep_dict, array_q_r, export_q_s);
+            detect_handles.push(detect_handle);
+        }
     }
 
     for _ in 0..4 {
