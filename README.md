@@ -24,7 +24,7 @@ Run `md5rs -h` to see all available options.
 
 [FP32 model](https://huggingface.co/Simulacraliasing/Megadetector/resolve/main/md_v5a_d_pp.onnx?download=true)
 
-[FP16 model](https://huggingface.co/Simulacraliasing/Megadetector/resolve/main/md_v5a_d_pp.onnx?download=true)
+[FP16 model](https://huggingface.co/Simulacraliasing/Megadetector/resolve/main/md_v5a_d_pp_fp16.onnx?download=true)
 
 Converted onnx model from [md_v5a.0.0.pt](https://github.com/microsoft/CameraTraps/releases/download/v5.0/md_v5a.0.0.pt) and add dynamic batch and some postprocessing.
 
