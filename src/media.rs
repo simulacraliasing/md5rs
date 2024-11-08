@@ -4,9 +4,9 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, Local};
 use crossbeam_channel::Sender;
 use fast_image_resize::{ResizeAlg, ResizeOptions, Resizer};
-use ffmpeg_sidecar::child::FfmpegChild;
 use ffmpeg_sidecar::command::FfmpegCommand;
-use ffmpeg_sidecar::event::{FfmpegEvent, LogLevel, OutputVideoFrame};
+use ffmpeg_sidecar::event::{FfmpegEvent, LogLevel};
+use ffmpeg_sidecar::iter::FfmpegIterator;
 use image::{DynamicImage, GenericImageView, ImageReader};
 use jpeg_decoder::Decoder;
 use ndarray::{s, Array3, Dim};
@@ -32,6 +32,9 @@ pub enum MediaError {
 
     #[error("Failed to decode: {0}")]
     VideoDecodeError(String),
+
+    #[error("Ffmpeg error when decoding {1}: {0}")]
+    FfmpegError(String, String),
 }
 
 pub struct Frame {
@@ -41,7 +44,7 @@ pub struct Frame {
     pub height: usize,
     pub padding: (usize, usize),
     pub ratio: f32,
-    pub iframe_index: usize,
+    pub frame_index: usize,
     pub total_frames: usize,
     pub shoot_time: Option<DateTime<Local>>,
 }
@@ -118,7 +121,10 @@ fn decode_image(file: &FileItem) -> Result<DynamicImage> {
     {
         Ok(img) => img,
         Err(_e) => {
-            warn!("Failed to decode image with ImageReader. Trying jpeg_decoder. {:?}", _e);
+            warn!(
+                "Failed to decode image with ImageReader. Trying jpeg_decoder. {:?}",
+                _e
+            );
             let img_reader = File::open(file.tmp_path.as_path()).map_err(MediaError::IoError)?;
             let mut decoder = Decoder::new(BufReader::new(img_reader));
             let pixels = decoder.decode().map_err(MediaError::ImageDecodeError)?;
@@ -158,7 +164,7 @@ pub fn process_image(
                 height: img.height() as usize,
                 padding: (pad_w, pad_h),
                 ratio,
-                iframe_index: 0,
+                frame_index: 0,
                 total_frames: 1,
                 shoot_time,
             };
@@ -232,19 +238,19 @@ pub fn process_video(
     array_q_s: Sender<ArrayItem>,
 ) -> Result<()> {
     let video_path = file.tmp_path.to_string_lossy();
-    let input = create_ffmpeg_command(&video_path, imgsz, iframe)?;
+    let input = create_ffmpeg_iter(&video_path, imgsz, iframe)?;
 
     handle_ffmpeg_output(input, array_q_s, imgsz, file, max_frames)?;
 
     Ok(())
 }
 
-fn create_ffmpeg_command(video_path: &str, imgsz: usize, iframe: bool) -> Result<FfmpegChild> {
+fn create_ffmpeg_iter(video_path: &str, imgsz: usize, iframe: bool) -> Result<FfmpegIterator> {
     let mut ffmpeg_command = FfmpegCommand::new();
     if iframe {
         ffmpeg_command.args(["-skip_frame", "nokey"]);
     }
-    let command = ffmpeg_command
+    let iter = ffmpeg_command
         .input(video_path)
         .args(&[
             "-an",
@@ -261,98 +267,82 @@ fn create_ffmpeg_command(video_path: &str, imgsz: usize, iframe: bool) -> Result
             "vfr",
         ])
         .output("-")
-        .spawn()?;
-    Ok(command)
-}
-
-fn decode_video(
-    mut input: FfmpegChild,
-) -> Result<(Vec<OutputVideoFrame>, Option<usize>, Option<usize>)> {
-    let mut width = None;
-    let mut height = None;
-    let mut frames = vec![];
-
-    for e in input.iter()? {
-        match e {
-            FfmpegEvent::Log(LogLevel::Error, e) => {
-                if e.contains("decode_slice_header error")
-                    || e.contains("Frame num change")
-                    || e.contains("error while decoding MB")
-                {
-                    continue;
-                } else {
-                    return Err(MediaError::VideoDecodeError(e).into());
-                }
-            }
-            FfmpegEvent::ParsedInputStream(i) => {
-                if i.stream_type.to_lowercase() == "video" {
-                    width = Some(i.width as usize);
-                    height = Some(i.height as usize);
-                }
-            }
-            FfmpegEvent::OutputFrame(f) => {
-                frames.push(f);
-            }
-            _ => {}
-        }
-    }
-
-    Ok((frames, width, height))
+        .spawn()?
+        .iter()?;
+    Ok(iter)
 }
 
 fn handle_ffmpeg_output(
-    input: FfmpegChild,
+    input: FfmpegIterator,
     s: Sender<ArrayItem>,
     imgsz: usize,
     file: &FileItem,
     max_frames: Option<usize>,
 ) -> Result<()> {
-    match decode_video(input) {
-        Ok((frames, width, height)) => {
-            let (sampled_frames, sampled_indexes) =
-                sample_evenly(&frames, max_frames.unwrap_or(frames.len()));
+    let file_path = file.file_path.to_string_lossy().into_owned();
 
-            let shoot_time: Option<DateTime<Local>> = match get_video_date(&file.tmp_path.as_path())
-            {
-                Ok(shoot_time) => Some(shoot_time),
-                Err(_e) => None,
-            };
-
-            //calculate ratio and padding
-            let width = width.expect("Failed to get video width");
-            let height = height.expect("Failed to get video height");
-            let pad = (width as i32 - height as i32).abs() / 2;
-            let padding = if width > height {
-                (0, pad as usize)
-            } else {
-                (pad as usize, 0)
-            };
-            let ratio = width.max(height) as f32 / imgsz as f32;
-
-            let frames_length = sampled_frames.len();
-
-            for (f, i) in sampled_frames.into_iter().zip(sampled_indexes.into_iter()) {
-                let ndarray_frame = Array3::from_shape_vec((imgsz, imgsz, 3), f.data).unwrap();
-                let mut ndarray_frame = ndarray_frame.map(|&x| x as f32 / 255.0);
-                ndarray_frame = ndarray_frame.permuted_axes([2, 0, 1]);
-                let frame_data = ArrayItem::Frame(Frame {
-                    data: ndarray_frame,
-                    file: file.clone(),
-                    width,
-                    height,
-                    padding,
-                    ratio,
-                    iframe_index: i,
-                    total_frames: frames_length,
-                    shoot_time,
-                });
-                s.send(frame_data).expect("Send video frame failed");
+    let mut frames = Vec::new();
+    let mut ffmpeg_error = Vec::new();
+    for event in input {
+        match event {
+            FfmpegEvent::Error(e) | FfmpegEvent::Log(LogLevel::Error, e) => {
+                ffmpeg_error.push(e);
             }
+            FfmpegEvent::OutputFrame(frame) => {
+                frames.push(frame);
+            }
+            _ => (),
         }
-        Err(error) => {
-            let frame_data = ArrayItem::ErrFile(ErrFile {
+    }
+
+    for e in ffmpeg_error {
+        let error = MediaError::FfmpegError(e, file_path.clone());
+        warn!("{:?}", error);
+    }
+
+    if frames.is_empty() {
+        let error = MediaError::VideoDecodeError(file_path).into();
+        error!("{:?}", error);
+        let frame_data = ArrayItem::ErrFile(ErrFile {
+            file: file.clone(),
+            error,
+        });
+        s.send(frame_data).expect("Send video frame failed");
+    } else {
+        let sampled_frames = sample_evenly(&frames, max_frames.unwrap_or(frames.len()));
+
+        let shoot_time: Option<DateTime<Local>> = match get_video_date(&file.tmp_path.as_path()) {
+            Ok(shoot_time) => Some(shoot_time),
+            Err(_e) => None,
+        };
+
+        //calculate ratio and padding
+        let width = frames[0].width as usize;
+        let height = frames[0].height as usize;
+        let pad = (width as i32 - height as i32).abs() / 2;
+        let padding = if width > height {
+            (0, pad as usize)
+        } else {
+            (pad as usize, 0)
+        };
+        let ratio = width.max(height) as f32 / imgsz as f32;
+
+        let frames_length = sampled_frames.len();
+
+        for f in sampled_frames.into_iter() {
+            let ndarray_frame = Array3::from_shape_vec((imgsz, imgsz, 3), f.data).unwrap();
+            let mut ndarray_frame = ndarray_frame.map(|&x| x as f32 / 255.0);
+            ndarray_frame = ndarray_frame.permuted_axes([2, 0, 1]);
+            let frame_data = ArrayItem::Frame(Frame {
+                data: ndarray_frame,
                 file: file.clone(),
-                error,
+                width,
+                height,
+                padding,
+                ratio,
+                frame_index: f.frame_num as usize,
+                total_frames: frames_length,
+                shoot_time,
             });
             s.send(frame_data).expect("Send video frame failed");
         }
@@ -368,7 +358,8 @@ fn get_image_date(parser: &mut MediaParser, image: &Path) -> Result<DateTime<Loc
     let exif: Exif = iter.into();
     let shoot_time = exif
         .get(ExifTag::DateTimeOriginal)
-        .or_else(|| exif.get(ExifTag::ModifyDate)).context("Neither DateTimeOriginal nor ModifyDate found")?;
+        .or_else(|| exif.get(ExifTag::ModifyDate))
+        .context("Neither DateTimeOriginal nor ModifyDate found")?;
     let shoot_time = shoot_time.as_time().unwrap().with_timezone(&Local);
 
     Ok(shoot_time)

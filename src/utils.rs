@@ -85,21 +85,19 @@ pub fn nms(boxes: &mut Vec<Bbox>, agnostic: bool, topk: usize, iou_threshold: f3
     result
 }
 
-pub fn sample_evenly<T: Clone>(list: &[T], sample_size: usize) -> (Vec<T>, Vec<usize>) {
+pub fn sample_evenly<T: Clone>(list: &[T], sample_size: usize) -> Vec<T> {
     let len = list.len();
     if sample_size == 0 || len == 0 {
-        return (Vec::new(), Vec::new());
+        return Vec::new();
     }
 
     let step = len as f64 / sample_size as f64;
     let mut sampled_elements = Vec::with_capacity(sample_size);
-    let mut sampled_indexes = Vec::with_capacity(sample_size);
     for i in 0..sample_size {
         let index = (i as f64 * step).floor() as usize;
         sampled_elements.push(list[index].clone());
-        sampled_indexes.push(index);
     }
-    (sampled_elements, sampled_indexes)
+    sampled_elements
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Hash)]

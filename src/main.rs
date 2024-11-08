@@ -173,7 +173,6 @@ fn main() -> Result<()> {
             conf_thres: args.conf,
             batch_size: args.batch,
             timeout: 50,
-            iframe: args.iframe_only,
         });
         let ep_dict = read_ep_dict(&d)?;
         for _ in 0..args.workers[i] {

@@ -6,6 +6,10 @@
 
 ## Changes
 
+### Version 0.1.3
+
+Update dependencies `ffmpeg-sidecar` to 2.0, `ort` to 2.0.0.rc8, `onnxruntime` to 1.20.0.
+
 ### Version 0.1.2
 
 Features:

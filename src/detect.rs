@@ -24,7 +24,6 @@ pub struct DetectConfig {
     pub iou_thres: f32,
     pub batch_size: usize,
     pub timeout: usize,
-    pub iframe: bool,
 }
 
 pub fn detect_worker(
@@ -136,7 +135,6 @@ pub fn process_frames(
                             shoot_time: None,
                             frame_index: 0,
                             total_frames: 1,
-                            is_iframe: config.iframe,
                             bboxes: Some(vec![]),
                             label: None,
                             error: Some(err_file.error.to_string()),
@@ -239,9 +237,8 @@ pub fn process_batch(
         let export_frame = ExportFrame {
             file: frames[i].file.clone(),
             shoot_time: shoot_time,
-            frame_index: frames[i].iframe_index,
+            frame_index: frames[i].frame_index,
             total_frames: frames[i].total_frames,
-            is_iframe: config.iframe,
             bboxes: Some(nms_boxes),
             label: Some(label),
             error: None,
