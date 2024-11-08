@@ -10,6 +10,10 @@
 
 Update dependencies `ffmpeg-sidecar` to 2.0, `ort` to 2.0.0.rc8, `onnxruntime` to 1.20.0.
 
+Bug fixes:
+
+- Fix potential panic caused by ffmpeg error
+
 ### Version 0.1.2
 
 Features:
