@@ -6,11 +6,13 @@
 /models/*.onnx
 /models/*.config
 /examples
-*.txt
+/*.txt
 *.code-workspace
 logs/
 data/
-script/*/
 /buffer
 epinfo_*
 /release
+*.ps1
+.venv*
+pack

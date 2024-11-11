@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 use ort::{ExecutionProvider, Session};
 use serde::{Deserialize, Serialize};
-use tracing::info;
+use tracing::{debug, info};
 use walkdir::{DirEntry, WalkDir};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -199,6 +199,20 @@ pub enum Ep {
     Cpu,
 }
 
+impl PartialEq for Ep {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Ep::CoreML, Ep::CoreML) => true,
+            (Ep::TensorRT, Ep::TensorRT) => true,
+            (Ep::CUDA, Ep::CUDA) => true,
+            (Ep::OpenVINO, Ep::OpenVINO) => true,
+            (Ep::DirectML, Ep::DirectML) => true,
+            (Ep::Cpu, Ep::Cpu) => true,
+            _ => false,
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone)]
 pub struct EpInfo {
     pub ep: Ep,
@@ -263,7 +277,7 @@ fn check_ep_availability(device: &str) -> Result<()> {
     {
         let tensor_rt =
             ort::TensorRTExecutionProvider::default().with_device_id(device.parse().unwrap_or(0));
-        if tensor_rt.is_available().unwrap() {
+        if tensor_rt.is_available().unwrap_or(false) {
             match Session::builder()?
                 .with_execution_providers(vec![tensor_rt.build().error_on_failure()])
             {
@@ -292,7 +306,7 @@ fn check_ep_availability(device: &str) -> Result<()> {
 
         let cuda =
             ort::CUDAExecutionProvider::default().with_device_id(device.parse().unwrap_or(0));
-        if cuda.is_available().unwrap() {
+        if cuda.is_available().unwrap_or(false) {
             match Session::builder()?
                 .with_execution_providers(vec![cuda.build().error_on_failure()])
             {
@@ -321,7 +335,7 @@ fn check_ep_availability(device: &str) -> Result<()> {
 
         let open_vino =
             ort::OpenVINOExecutionProvider::default().with_device_type(device.to_uppercase());
-        if open_vino.is_available().unwrap() {
+        if open_vino.is_available().unwrap_or(false) {
             match Session::builder()?
                 .with_execution_providers(vec![open_vino.build().error_on_failure()])
             {
@@ -332,7 +346,8 @@ fn check_ep_availability(device: &str) -> Result<()> {
                     };
                     ep_infos.push(ep_info);
                 }
-                Err(_e) => {
+                Err(e) => {
+                    debug!("OpenVINO error: {:?}", e);
                     let ep_info = EpInfo {
                         ep: Ep::OpenVINO,
                         available: false,
@@ -353,7 +368,7 @@ fn check_ep_availability(device: &str) -> Result<()> {
     {
         let dml =
             ort::DirectMLExecutionProvider::default().with_device_id(device.parse().unwrap_or(0));
-        if dml.is_available().unwrap() {
+        if dml.is_available().unwrap_or(false) {
             match Session::builder()?.with_execution_providers(vec![dml.build().error_on_failure()])
             {
                 Ok(_) => {

@@ -28,23 +28,24 @@ pub struct DetectConfig {
 
 pub fn detect_worker(
     config: Arc<DetectConfig>,
-    ep_dict: EpDict,
+    mut ep_dict: EpDict,
     array_q_recv: Receiver<ArrayItem>,
     export_q_s: Sender<ExportFrame>,
 ) -> thread::JoinHandle<()> {
     thread::spawn(move || {
-        let mut ep = ort::CPUExecutionProvider::default().build();
-        for ep_info in ep_dict.eps {
+        let mut eps = vec![];
+        for ep_info in &ep_dict.eps {
             if ep_info.available {
                 match ep_info.ep {
                     Ep::CoreML => {
-                        ep = ort::CoreMLExecutionProvider::default()
+                        let ep = ort::CoreMLExecutionProvider::default()
                             .with_ane_only()
                             .with_subgraphs()
                             .build();
+                        eps.push((ep, Ep::CoreML));
                     }
                     Ep::TensorRT => {
-                        ep = ort::TensorRTExecutionProvider::default()
+                        let ep = ort::TensorRTExecutionProvider::default()
                             .with_engine_cache(true)
                             .with_engine_cache_path("./models")
                             .with_timing_cache(true)
@@ -63,34 +64,56 @@ pub fn detect_worker(
                             ))
                             .with_device_id(config.device.parse().unwrap_or(0))
                             .build();
+                        eps.push((ep, Ep::TensorRT));
                     }
                     Ep::CUDA => {
-                        ep = ort::CUDAExecutionProvider::default()
+                        let ep = ort::CUDAExecutionProvider::default()
                             .with_device_id(config.device.parse().unwrap_or(0))
                             .build();
+                        eps.push((ep, Ep::CUDA));
                     }
                     Ep::OpenVINO => {
-                        ep = ort::OpenVINOExecutionProvider::default()
+                        let ep = ort::OpenVINOExecutionProvider::default()
                             .with_device_type(config.device.to_uppercase())
                             .build();
+                        eps.push((ep, Ep::OpenVINO));
                     }
                     Ep::DirectML => {
-                        ep = ort::DirectMLExecutionProvider::default()
+                        let ep = ort::DirectMLExecutionProvider::default()
                             .with_device_id(config.device.parse().unwrap_or(0))
                             .build();
+                        eps.push((ep, Ep::DirectML));
                     }
                     Ep::Cpu => {
-                        ep = ort::CPUExecutionProvider::default().build();
+                        let ep = ort::CPUExecutionProvider::default().build();
+                        eps.push((ep, Ep::Cpu));
                     }
                 }
                 break;
             }
         }
 
-        info!("Execution provider: {:?}", ep);
+        let mut session = load_model(&config.model_path, eps.pop().unwrap().0).unwrap();
 
-        let model = load_model(&config.model_path, ep).expect("Failed to load model");
-        process_frames(array_q_recv, export_q_s, &model, &config).unwrap();
+        while !eps.is_empty() {
+            let (ep, ep_enum) = eps.remove(0);
+            info!("Loading model on execution provider: {:?}", ep);
+            let model = load_model(&config.model_path, ep);
+            match model {
+                Ok(s) => {
+                    session = s;
+                    break;
+                }
+                Err(e) => {
+                    update_ep_dict(&mut ep_dict, ep_enum, false);
+                    warn!("Failed to load model with {:?}, trying next EP", e);
+                }
+            }
+        }
+
+        ep_dict.save().unwrap();
+
+        process_frames(array_q_recv, export_q_s, &session, &config).unwrap();
     })
 }
 
@@ -100,6 +123,14 @@ pub fn load_model(model_path: &Path, ep: ExecutionProviderDispatch) -> Result<Se
         .commit_from_file(model_path)?;
 
     Ok(model)
+}
+
+fn update_ep_dict(ep_dict: &mut EpDict, ep: Ep, available: bool) {
+    for ep_info in &mut ep_dict.eps {
+        if ep_info.ep == ep {
+            ep_info.available = available;
+        }
+    }
 }
 
 #[instrument]
