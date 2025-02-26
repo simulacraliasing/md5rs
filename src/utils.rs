@@ -245,7 +245,7 @@ fn check_ep_availability(device: &str) -> Result<()> {
 
     #[cfg(target_os = "macos")]
     {
-        let coreml = ort::CoreMLExecutionProvider::default();
+        let coreml = ort::execution_providers::CoreMLExecutionProvider::default();
         if coreml.is_available().unwrap() {
             match Session::builder()?
                 .with_execution_providers(vec![coreml.build().error_on_failure()])
