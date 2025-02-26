@@ -7,7 +7,9 @@ use std::time::{Duration, Instant};
 use anyhow::{anyhow, Result};
 use crossbeam_channel::{Receiver, RecvTimeoutError, Sender};
 use ndarray::{s, Array4, Axis};
-use ort::{inputs, ExecutionProviderDispatch, Session, SessionOutputs};
+use ort::execution_providers::ExecutionProviderDispatch;
+use ort::inputs;
+use ort::session::{Session, SessionOutputs};
 use tracing::{debug, info, instrument, warn};
 
 use crate::export::ExportFrame;
@@ -38,14 +40,14 @@ pub fn detect_worker(
             if ep_info.available {
                 match ep_info.ep {
                     Ep::CoreML => {
-                        let ep = ort::CoreMLExecutionProvider::default()
+                        let ep = ort::execution_providers::CoreMLExecutionProvider::default()
                             .with_ane_only()
                             .with_subgraphs()
                             .build();
                         eps.push((ep, Ep::CoreML));
                     }
                     Ep::TensorRT => {
-                        let ep = ort::TensorRTExecutionProvider::default()
+                        let ep = ort::execution_providers::TensorRTExecutionProvider::default()
                             .with_engine_cache(true)
                             .with_engine_cache_path("./models")
                             .with_timing_cache(true)
@@ -67,25 +69,25 @@ pub fn detect_worker(
                         eps.push((ep, Ep::TensorRT));
                     }
                     Ep::CUDA => {
-                        let ep = ort::CUDAExecutionProvider::default()
+                        let ep = ort::execution_providers::CUDAExecutionProvider::default()
                             .with_device_id(config.device.parse().unwrap_or(0))
                             .build();
                         eps.push((ep, Ep::CUDA));
                     }
                     Ep::OpenVINO => {
-                        let ep = ort::OpenVINOExecutionProvider::default()
+                        let ep = ort::execution_providers::OpenVINOExecutionProvider::default()
                             .with_device_type(config.device.to_uppercase())
                             .build();
                         eps.push((ep, Ep::OpenVINO));
                     }
                     Ep::DirectML => {
-                        let ep = ort::DirectMLExecutionProvider::default()
+                        let ep = ort::execution_providers::DirectMLExecutionProvider::default()
                             .with_device_id(config.device.parse().unwrap_or(0))
                             .build();
                         eps.push((ep, Ep::DirectML));
                     }
                     Ep::Cpu => {
-                        let ep = ort::CPUExecutionProvider::default().build();
+                        let ep = ort::execution_providers::CPUExecutionProvider::default().build();
                         eps.push((ep, Ep::Cpu));
                     }
                 }

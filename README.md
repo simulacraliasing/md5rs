@@ -28,6 +28,14 @@ Run `md5rs -h` to see all available options.
 
 Converted onnx model from [md_v5a.0.0.pt](https://github.com/microsoft/CameraTraps/releases/download/v5.0/md_v5a.0.0.pt) and add dynamic batch and some postprocessing.
 
+##### MegaDetector v6e(640 & 1280)
+
+[640 FP32 model](https://huggingface.co/Simulacraliasing/Megadetector/resolve/main/MDV6-yolov9e_d_pp.onnx?download=true)
+
+[1280 FP32 model](https://huggingface.co/Simulacraliasing/Megadetector/resolve/main/MDV6-yolov9e-1280_d_pp.onnx?download=true)
+
+Converted onnx model from [MDV6-yolov9e.pt](https://zenodo.org/records/14775968/files/MDV6-yolov9e.pt?download=1), [MDV6-yolov9-e-1280.pt](https://zenodo.org/records/14775968/files/MDV6-yolov9-e-1280.pt?download=1) and add dynamic batch and some postprocessing.
+
 ##### MegaDetector v6b (Beta)
 
 [FP32 model](https://huggingface.co/Simulacraliasing/Megadetector/resolve/main/md_v6b_d_pp.onnx?download=true)

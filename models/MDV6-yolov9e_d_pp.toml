@@ -1,0 +1,8 @@
+name = "mdv6-yolov9e"
+path = "models/MDV6-yolov9e_d_pp.onnx"
+imgsz = 640
+classes = [
+    "Animal",
+    "Person",
+    "Vehicle",
+]

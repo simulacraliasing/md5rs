@@ -6,6 +6,12 @@
 
 ## Changes
 
+### Version 0.1.4
+
+Update dependencies `ort` to 2.0.0.rc9.
+
+Add new model config files for [MegaDetectorV6-yolov9e](https://github.com/microsoft/CameraTraps?tab=readme-ov-file#racing_cardashdash-megadetectorv6-smaller-better-faster)  
+
 ### Version 0.1.3
 
 Update dependencies `ffmpeg-sidecar` to 2.0, `ort` to 2.0.0.rc8, `onnxruntime` to 1.20.0.
