@@ -4,10 +4,9 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
-use ort::execution_providers::ExecutionProvider;
-use ort::session::Session;
+use ort::{ExecutionProvider, Session};
 use serde::{Deserialize, Serialize};
-use tracing::{debug, info};
+use tracing::info;
 use walkdir::{DirEntry, WalkDir};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -245,7 +244,7 @@ fn check_ep_availability(device: &str) -> Result<()> {
 
     #[cfg(target_os = "macos")]
     {
-        let coreml = ort::execution_providers::CoreMLExecutionProvider::default();
+        let coreml = ort::CoreMLExecutionProvider::default();
         if coreml.is_available().unwrap() {
             match Session::builder()?
                 .with_execution_providers(vec![coreml.build().error_on_failure()])
@@ -277,7 +276,7 @@ fn check_ep_availability(device: &str) -> Result<()> {
     #[cfg(any(target_os = "linux", target_os = "windows"))]
     {
         let tensor_rt =
-            ort::execution_providers::TensorRTExecutionProvider::default().with_device_id(device.parse().unwrap_or(0));
+            ort::TensorRTExecutionProvider::default().with_device_id(device.parse().unwrap_or(0));
         if tensor_rt.is_available().unwrap_or(false) {
             match Session::builder()?
                 .with_execution_providers(vec![tensor_rt.build().error_on_failure()])
@@ -306,7 +305,7 @@ fn check_ep_availability(device: &str) -> Result<()> {
         }
 
         let cuda =
-            ort::execution_providers::CUDAExecutionProvider::default().with_device_id(device.parse().unwrap_or(0));
+            ort::CUDAExecutionProvider::default().with_device_id(device.parse().unwrap_or(0));
         if cuda.is_available().unwrap_or(false) {
             match Session::builder()?
                 .with_execution_providers(vec![cuda.build().error_on_failure()])
@@ -335,7 +334,7 @@ fn check_ep_availability(device: &str) -> Result<()> {
         }
 
         let open_vino =
-            ort::execution_providers::OpenVINOExecutionProvider::default().with_device_type(device.to_uppercase());
+            ort::OpenVINOExecutionProvider::default().with_device_type(device.to_uppercase());
         if open_vino.is_available().unwrap_or(false) {
             match Session::builder()?
                 .with_execution_providers(vec![open_vino.build().error_on_failure()])
@@ -368,7 +367,7 @@ fn check_ep_availability(device: &str) -> Result<()> {
     #[cfg(target_os = "windows")]
     {
         let dml =
-            ort::execution_providers::DirectMLExecutionProvider::default().with_device_id(device.parse().unwrap_or(0));
+            ort::DirectMLExecutionProvider::default().with_device_id(device.parse().unwrap_or(0));
         if dml.is_available().unwrap_or(false) {
             match Session::builder()?.with_execution_providers(vec![dml.build().error_on_failure()])
             {
