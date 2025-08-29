@@ -28,7 +28,7 @@ time = "0.3.36"
 tracing = "0.1.40"
 tracing-appender = "0.2.3"
 tracing-error = "0.2.0"
-tracing-subscriber = { version = "0.3.18", features = [
+tracing-subscriber = { version = "0.3.20", features = [
     "std",
     "local-time",
     "env-filter",
